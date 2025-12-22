@@ -13,6 +13,9 @@ extern "C" {
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 }
 
+#include <vector>
+#include <string>
+
 struct wl_state {
     struct wl_display *display;
     struct wl_registry *registry;
@@ -25,6 +28,7 @@ struct wl_state {
     bool running;
     int width;
     int height;
+    std::vector<std::string> menu_items;
 };
 
 static void registry_global(void *data, struct wl_registry *registry,
@@ -71,6 +75,45 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 };
 
 static struct wl_buffer *create_buffer(struct wl_state *state) {
+    const int button_height = 40;
+    const int padding = 10;
+    const int button_spacing = 5;
+    const int text_padding = 10;  // Padding inside buttons for text
+    const int min_width = 200;
+    
+    // Calculate width based on widest text
+    PangoFontDescription *desc = pango_font_description_from_string("Sans 12");
+    cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    cairo_t *temp_cr = cairo_create(temp_surface);
+    
+    int max_text_width = 0;
+    for (const auto& item : state->menu_items) {
+        PangoLayout *layout = pango_cairo_create_layout(temp_cr);
+        pango_layout_set_font_description(layout, desc);
+        pango_layout_set_text(layout, item.c_str(), -1);
+        
+        int text_width, text_height;
+        pango_layout_get_pixel_size(layout, &text_width, &text_height);
+        
+        if (text_width > max_text_width) {
+            max_text_width = text_width;
+        }
+        
+        g_object_unref(layout);
+    }
+    
+    cairo_destroy(temp_cr);
+    cairo_surface_destroy(temp_surface);
+    
+    // Set width to accommodate widest text plus padding
+    state->width = max_text_width + 2 * padding + 2 * text_padding;
+    if (state->width < min_width) {
+        state->width = min_width;
+    }
+    
+    // Calculate dimensions based on menu items
+    state->height = state->menu_items.size() * (button_height + button_spacing) + padding * 2 - button_spacing;
+    
     int stride = state->width * 4;
     int size = stride * state->height;
 
@@ -96,26 +139,41 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
         static_cast<unsigned char *>(data), CAIRO_FORMAT_ARGB32, state->width, state->height, stride);
     cairo_t *cr = cairo_create(cairo_surface);
 
-    // Draw blue rectangle background
-    cairo_set_source_rgb(cr, 0.2, 0.4, 0.8);
+    // Draw background
+    cairo_set_source_rgb(cr, 0.15, 0.15, 0.15);
     cairo_rectangle(cr, 0, 0, state->width, state->height);
     cairo_fill(cr);
 
-    // Draw "Hello World" text
-    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-    PangoLayout *layout = pango_cairo_create_layout(cr);
-    PangoFontDescription *desc = pango_font_description_from_string("Sans Bold 24");
-    pango_layout_set_font_description(layout, desc);
-    pango_layout_set_text(layout, "Hello World", -1);
-
-    int text_width, text_height;
-    pango_layout_get_pixel_size(layout, &text_width, &text_height);
-
-    cairo_move_to(cr, (state->width - text_width) / 2, (state->height - text_height) / 2);
-    pango_cairo_show_layout(cr, layout);
+    for (size_t i = 0; i < state->menu_items.size(); i++) {
+        int y = padding + i * (button_height + button_spacing);
+        
+        // Draw button background
+        cairo_set_source_rgb(cr, 0.3, 0.3, 0.35);
+        cairo_rectangle(cr, padding, y, state->width - 2 * padding, button_height);
+        cairo_fill(cr);
+        
+        // Draw button border
+        cairo_set_source_rgb(cr, 0.5, 0.5, 0.55);
+        cairo_set_line_width(cr, 1.0);
+        cairo_rectangle(cr, padding, y, state->width - 2 * padding, button_height);
+        cairo_stroke(cr);
+        
+        // Draw text
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        PangoLayout *layout = pango_cairo_create_layout(cr);
+        pango_layout_set_font_description(layout, desc);
+        pango_layout_set_text(layout, state->menu_items[i].c_str(), -1);
+        
+        int text_width, text_height;
+        pango_layout_get_pixel_size(layout, &text_width, &text_height);
+        
+        cairo_move_to(cr, padding + 10, y + (button_height - text_height) / 2);
+        pango_cairo_show_layout(cr, layout);
+        
+        g_object_unref(layout);
+    }
 
     pango_font_description_free(desc);
-    g_object_unref(layout);
     cairo_destroy(cr);
     cairo_surface_destroy(cairo_surface);
 
@@ -134,8 +192,26 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
 int main() {
     struct wl_state state = {};
     state.running = true;
-    state.width = 300;
+    state.width = 200;
     state.height = 100;
+
+    // Read menu items from stdin
+    char line[256];
+    while (fgets(line, sizeof(line), stdin)) {
+        // Remove newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') {
+            line[len - 1] = '\0';
+        }
+        if (strlen(line) > 0) {
+            state.menu_items.push_back(std::string(line));
+        }
+    }
+
+    if (state.menu_items.empty()) {
+        fprintf(stderr, "No menu items provided on stdin\n");
+        return 1;
+    }
 
     // Connect to Wayland display
     state.display = wl_display_connect(nullptr);
@@ -158,12 +234,12 @@ int main() {
     state.surface = wl_compositor_create_surface(state.compositor);
     state.layer_surface = zwlr_layer_shell_v1_get_layer_surface(
         state.layer_shell, state.surface, nullptr,
-        ZWLR_LAYER_SHELL_V1_LAYER_TOP, "hello-world");
+        ZWLR_LAYER_SHELL_V1_LAYER_TOP, "menu");
 
-    // Configure layer surface
+    // Configure layer surface - changed to upper-left corner
     zwlr_layer_surface_v1_set_size(state.layer_surface, state.width, state.height);
     zwlr_layer_surface_v1_set_anchor(state.layer_surface,
-        ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
+        ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
     zwlr_layer_surface_v1_add_listener(state.layer_surface, &layer_surface_listener, &state);
 
     wl_surface_commit(state.surface);
