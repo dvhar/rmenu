@@ -58,15 +58,18 @@ struct wl_state {
     int pointer_x = 0; // in logical coords
     int pointer_y = 0; // in logical coords
     bool pointer_inside = false;
-};
 
-// ... output listeners and registry as before ...
+    // Hover handling for proof-of-concept
+    int hovered_index = -1; // top-level menu index hovered, or -1 if none
+};
 
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
 static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
 static void output_done(void*, struct wl_output*) {}
 static void output_name(void*, struct wl_output*, const char*) {}
 static void output_description(void*, struct wl_output*, const char*) {}
+
+static struct wl_buffer *create_buffer(struct wl_state *state);
 
 static void output_scale(void *data, struct wl_output *output, int32_t factor) {
     wl_state* state = (wl_state*)data;
@@ -88,24 +91,80 @@ static const struct wl_output_listener output_listener = {
 #endif
 };
 
-// ---------------- Seat/Pointer handling below ------------------
-
 static void pointer_enter(void *data, struct wl_pointer *, uint32_t, struct wl_surface *, wl_fixed_t sx, wl_fixed_t sy) {
     wl_state *state = static_cast<wl_state*>(data);
     state->pointer_inside = true;
     state->pointer_x = wl_fixed_to_double(sx);
     state->pointer_y = wl_fixed_to_double(sy);
+
+    // Update hovered index and redraw if necessary
+    const int button_height = 40;
+    const int button_spacing = 5;
+    const int padding = 10;
+    int y = state->pointer_y;
+
+    int new_hovered = -1;
+    for (size_t i = 0; i < state->menu_items.size(); ++i) {
+        int item_y1 = padding + i * (button_height + button_spacing);
+        int item_y2 = item_y1 + button_height;
+        if (y >= item_y1 && y < item_y2) {
+            if (!state->menu_items[i].submenu.empty())
+                new_hovered = (int)i;
+            break;
+        }
+    }
+    if (state->hovered_index != new_hovered) {
+        state->hovered_index = new_hovered;
+        if (state->buffer) wl_buffer_destroy(state->buffer);
+        state->buffer = create_buffer(state);
+        wl_surface_attach(state->surface, state->buffer, 0, 0);
+        wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
+        wl_surface_commit(state->surface);
+    }
 }
 
 static void pointer_leave(void *data, struct wl_pointer *, uint32_t, struct wl_surface *) {
     wl_state *state = static_cast<wl_state*>(data);
     state->pointer_inside = false;
+    if (state->hovered_index != -1) {
+        state->hovered_index = -1;
+        if (state->buffer) wl_buffer_destroy(state->buffer);
+        state->buffer = create_buffer(state);
+        wl_surface_attach(state->surface, state->buffer, 0, 0);
+        wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
+        wl_surface_commit(state->surface);
+    }
 }
 
 static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t sx, wl_fixed_t sy) {
     wl_state *state = static_cast<wl_state*>(data);
     state->pointer_x = wl_fixed_to_double(sx);
     state->pointer_y = wl_fixed_to_double(sy);
+
+    // Update hovered index and redraw if necessary
+    const int button_height = 40;
+    const int button_spacing = 5;
+    const int padding = 10;
+    int y = state->pointer_y;
+
+    int new_hovered = -1;
+    for (size_t i = 0; i < state->menu_items.size(); ++i) {
+        int item_y1 = padding + i * (button_height + button_spacing);
+        int item_y2 = item_y1 + button_height;
+        if (y >= item_y1 && y < item_y2) {
+            if (!state->menu_items[i].submenu.empty())
+                new_hovered = (int)i;
+            break;
+        }
+    }
+    if (state->hovered_index != new_hovered) {
+        state->hovered_index = new_hovered;
+        if (state->buffer) wl_buffer_destroy(state->buffer);
+        state->buffer = create_buffer(state);
+        wl_surface_attach(state->surface, state->buffer, 0, 0);
+        wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
+        wl_surface_commit(state->surface);
+    }
 }
 
 static void pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, uint32_t button, uint32_t state_wl) {
@@ -117,7 +176,6 @@ static void pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, 
 
         int y = state->pointer_y; // pointer_y is in logical coordinates
 
-        // Only top-level items, only those with empty submenu are selectable
         for (size_t i = 0; i < state->menu_items.size(); ++i) {
             int item_y1 = padding + i * (button_height + button_spacing);
             int item_y2 = item_y1 + button_height;
@@ -173,7 +231,6 @@ static const struct wl_seat_listener seat_listener = {
     .name = seat_name,
 #endif
 };
-// -----------------------------------------------------------------
 
 static void registry_global(void *data, struct wl_registry *registry,
                            uint32_t name, const char *interface, uint32_t version) {
@@ -285,11 +342,18 @@ static void render_menu_items(
     const std::vector<MenuItem>& items,
     PangoFontDescription* desc,
     int logical_width,
+    int menu_height,
     int padding,
     int button_height,
     int button_spacing,
-    int text_padding
+    int text_padding,
+    int hovered_index
 ) {
+    // Draw main menu background (only main menu area, not submenu placeholder area)
+    cairo_set_source_rgb(cr, 0.15, 0.15, 0.15);
+    cairo_rectangle(cr, 0, 0, logical_width, menu_height);
+    cairo_fill(cr);
+
     for (size_t i = 0; i < items.size(); i++) {
         const MenuItem* item = &items[i];
         int y = padding + i * (button_height + button_spacing);
@@ -332,6 +396,43 @@ static void render_menu_items(
 
         g_object_unref(layout);
     }
+
+    // Render the "submenu placeholder" rectangle if needed
+    if (hovered_index >= 0 && hovered_index < (int)items.size() && !items[hovered_index].submenu.empty()) {
+        // Calculate position: to the right of the hovered menu item
+        int y = padding + hovered_index * (button_height + button_spacing);
+        int submenu_pad = 12;
+        int submenu_w = 210, submenu_h = 40;
+        int submenu_x = logical_width + submenu_pad;
+        int submenu_y = y;
+
+        // Draw rectangle
+        cairo_set_source_rgb(cr, 0.20, 0.22, 0.28);
+        cairo_rectangle(cr, submenu_x, submenu_y, submenu_w, submenu_h);
+        cairo_fill(cr);
+
+        // Draw border
+        cairo_set_source_rgb(cr, 0.5, 0.5, 0.55);
+        cairo_set_line_width(cr, 1.2);
+        cairo_rectangle(cr, submenu_x, submenu_y, submenu_w, submenu_h);
+        cairo_stroke(cr);
+
+        // Draw text "submenu placeholder"
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        PangoLayout *layout = pango_cairo_create_layout(cr);
+        pango_layout_set_font_description(layout, desc);
+        const char *placeholder = "submenu placeholder";
+        pango_layout_set_text(layout, placeholder, -1);
+
+        int text_width, text_height;
+        pango_layout_get_pixel_size(layout, &text_width, &text_height);
+        cairo_move_to(cr,
+            submenu_x + (submenu_w - text_width) / 2,
+            submenu_y + (submenu_h - text_height) / 2
+        );
+        pango_cairo_show_layout(cr, layout);
+        g_object_unref(layout);
+    }
 }
 
 static struct wl_buffer *create_buffer(struct wl_state *state) {
@@ -347,6 +448,7 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
     cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
     cairo_t *temp_cr = cairo_create(temp_surface);
 
+    // Menu width/height for the main menu only
     RenderedMenuGeometry geom = measure_menu_items(
         state->menu_items, desc, temp_cr, padding, text_padding,
         min_width, button_height, button_spacing
@@ -354,10 +456,17 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
     int logical_width = geom.width;
     int logical_height = geom.height;
 
+    // If a submenu placeholder might be needed, add room to the right
+    int total_width = logical_width;
+    if (state->hovered_index >= 0 && state->hovered_index < (int)state->menu_items.size() &&
+        !state->menu_items[state->hovered_index].submenu.empty()) {
+        total_width += 210 + 12 + 10; // submenu_w + submenu_pad + a little margin
+    }
+
     cairo_destroy(temp_cr);
     cairo_surface_destroy(temp_surface);
 
-    state->width = logical_width * scale;
+    state->width = total_width * scale;
     state->height = logical_height * scale;
     int stride = state->width * 4;
     int size = stride * state->height;
@@ -382,11 +491,13 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
 
     cairo_scale(cr, scale, scale);
 
-    cairo_set_source_rgb(cr, 0.15, 0.15, 0.15);
-    cairo_rectangle(cr, 0, 0, logical_width, logical_height);
-    cairo_fill(cr);
-
-    render_menu_items(cr, state->menu_items, desc, logical_width, padding, button_height, button_spacing, text_padding);
+    // Only fill main menu area
+    // NOT the whole total_width, just logical_width (the rest is for submenu placeholder)
+    // The rest will be transparent (or black if compositor doesn't support alpha).
+    // This matches the dimensions in render_menu_items.
+    // The placeholder rectangle will be drawn on top.
+    render_menu_items(cr, state->menu_items, desc, logical_width, logical_height,
+        padding, button_height, button_spacing, text_padding, state->hovered_index);
 
     pango_font_description_free(desc);
     cairo_destroy(cr);
@@ -405,7 +516,7 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
 
 static void parse_menu(std::vector<MenuItem>& out) {
     std::vector<std::vector<MenuItem>*> stack;
-    stack.push_back(&out); // stack[0] is root
+    stack.push_back(&out);
 
     char line[256];
     while (fgets(line, sizeof(line), stdin)) {
@@ -440,6 +551,7 @@ int main() {
     state.height = 100;
     state.chosen_output = nullptr;
     state.chosen_scale = 1;
+    state.hovered_index = -1;
 
     parse_menu(state.menu_items);
 
