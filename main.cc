@@ -174,7 +174,7 @@ static void pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, 
         const int button_spacing = 5;
         const int padding = 10;
 
-        int y = state->pointer_y; // pointer_y is in logical coordinates
+        int y = state->pointer_y;
 
         for (size_t i = 0; i < state->menu_items.size(); ++i) {
             int item_y1 = padding + i * (button_height + button_spacing);
@@ -337,6 +337,68 @@ static RenderedMenuGeometry measure_menu_items(
     return geom;
 }
 
+static void render_single_menu(
+    cairo_t* cr,
+    const std::vector<MenuItem>& items,
+    PangoFontDescription* desc,
+    int x,
+    int y,
+    int menu_width,
+    int menu_height,
+    int padding,
+    int button_height,
+    int button_spacing,
+    int text_padding
+) {
+    // Draw menu background
+    cairo_set_source_rgb(cr, 0.20, 0.22, 0.28);
+    cairo_rectangle(cr, x, y, menu_width, menu_height);
+    cairo_fill(cr);
+
+    for (size_t i = 0; i < items.size(); i++) {
+        const MenuItem* item = &items[i];
+        int item_y = y + padding + i * (button_height + button_spacing);
+
+        // Draw button background
+        cairo_set_source_rgb(cr, 0.3, 0.3, 0.35);
+        cairo_rectangle(cr, x + padding, item_y, menu_width - 2 * padding, button_height);
+        cairo_fill(cr);
+
+        // Draw button border
+        cairo_set_source_rgb(cr, 0.5, 0.5, 0.55);
+        cairo_set_line_width(cr, 1.0);
+        cairo_rectangle(cr, x + padding, item_y, menu_width - 2 * padding, button_height);
+        cairo_stroke(cr);
+
+        // Draw text
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        PangoLayout *layout = pango_cairo_create_layout(cr);
+        pango_layout_set_font_description(layout, desc);
+        pango_layout_set_text(layout, item->label.c_str(), -1);
+
+        int text_width, text_height;
+        pango_layout_get_pixel_size(layout, &text_width, &text_height);
+
+        cairo_move_to(cr, x + padding + text_padding, item_y + (button_height - text_height) / 2);
+        pango_cairo_show_layout(cr, layout);
+
+        // Draw arrow for submenu
+        if (!item->submenu.empty()) {
+            double arrow_size = text_height * 0.5;
+            double arrow_x = x + menu_width - padding - text_padding - arrow_size;
+            double arrow_y = item_y + (button_height - arrow_size) / 2;
+            cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+            cairo_move_to(cr, arrow_x, arrow_y);
+            cairo_line_to(cr, arrow_x + arrow_size, arrow_y + arrow_size / 2);
+            cairo_line_to(cr, arrow_x, arrow_y + arrow_size);
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        }
+
+        g_object_unref(layout);
+    }
+}
+
 static void render_menu_items(
     cairo_t* cr,
     const std::vector<MenuItem>& items,
@@ -349,89 +411,41 @@ static void render_menu_items(
     int text_padding,
     int hovered_index
 ) {
-    // Draw main menu background (only main menu area, not submenu placeholder area)
+    // Draw main menu background
     cairo_set_source_rgb(cr, 0.15, 0.15, 0.15);
     cairo_rectangle(cr, 0, 0, logical_width, menu_height);
     cairo_fill(cr);
 
-    for (size_t i = 0; i < items.size(); i++) {
-        const MenuItem* item = &items[i];
-        int y = padding + i * (button_height + button_spacing);
+    // Render main menu items
+    render_single_menu(cr, items, desc, 0, 0, logical_width, menu_height,
+                       padding, button_height, button_spacing, text_padding);
 
-        // Draw button background
-        cairo_set_source_rgb(cr, 0.3, 0.3, 0.35);
-        cairo_rectangle(cr, padding, y, logical_width - 2 * padding, button_height);
-        cairo_fill(cr);
+    // Render submenu if hovered
+    if (hovered_index >= 0 && hovered_index < (int)items.size() && !items[hovered_index].submenu.empty()) {
+        // Submenu geometry
+        const std::vector<MenuItem>& submenu = items[hovered_index].submenu;
+        // For simplicity, use same button sizes/padding as main menu
+        int submenu_pad = 12;
+        int submenu_x = logical_width + submenu_pad;
+        int submenu_y = padding + hovered_index * (button_height + button_spacing);
 
-        // Draw button border
-        cairo_set_source_rgb(cr, 0.5, 0.5, 0.55);
-        cairo_set_line_width(cr, 1.0);
-        cairo_rectangle(cr, padding, y, logical_width - 2 * padding, button_height);
-        cairo_stroke(cr);
-
-        // Draw text
-        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-        PangoLayout *layout = pango_cairo_create_layout(cr);
-        pango_layout_set_font_description(layout, desc);
-        pango_layout_set_text(layout, item->label.c_str(), -1);
-
-        int text_width, text_height;
-        pango_layout_get_pixel_size(layout, &text_width, &text_height);
-
-        cairo_move_to(cr, padding + text_padding, y + (button_height - text_height) / 2);
-        pango_cairo_show_layout(cr, layout);
-
-        // Draw arrow for submenu
-        if (!item->submenu.empty()) {
-            double arrow_size = text_height * 0.5;
-            double arrow_x = logical_width - padding - text_padding - arrow_size;
-            double arrow_y = y + (button_height - arrow_size) / 2;
-            cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-            cairo_move_to(cr, arrow_x, arrow_y);
-            cairo_line_to(cr, arrow_x + arrow_size, arrow_y + arrow_size / 2);
-            cairo_line_to(cr, arrow_x, arrow_y + arrow_size);
-            cairo_close_path(cr);
-            cairo_fill(cr);
+        // Measure submenu size
+        RenderedMenuGeometry subgeom;
+        {
+            cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+            cairo_t *temp_cr = cairo_create(temp_surface);
+            subgeom = measure_menu_items(submenu, desc, temp_cr, padding, text_padding,
+                                         200, button_height, button_spacing);
+            cairo_destroy(temp_cr);
+            cairo_surface_destroy(temp_surface);
         }
 
-        g_object_unref(layout);
-    }
+        // Only draw within the buffer, so don't overflow vertically
+        int max_submenu_y = std::max(0, menu_height - subgeom.height);
+        if (submenu_y > max_submenu_y) submenu_y = max_submenu_y;
 
-    // Render the "submenu placeholder" rectangle if needed
-    if (hovered_index >= 0 && hovered_index < (int)items.size() && !items[hovered_index].submenu.empty()) {
-        // Calculate position: to the right of the hovered menu item
-        int y = padding + hovered_index * (button_height + button_spacing);
-        int submenu_pad = 12;
-        int submenu_w = 210, submenu_h = 40;
-        int submenu_x = logical_width + submenu_pad;
-        int submenu_y = y;
-
-        // Draw rectangle
-        cairo_set_source_rgb(cr, 0.20, 0.22, 0.28);
-        cairo_rectangle(cr, submenu_x, submenu_y, submenu_w, submenu_h);
-        cairo_fill(cr);
-
-        // Draw border
-        cairo_set_source_rgb(cr, 0.5, 0.5, 0.55);
-        cairo_set_line_width(cr, 1.2);
-        cairo_rectangle(cr, submenu_x, submenu_y, submenu_w, submenu_h);
-        cairo_stroke(cr);
-
-        // Draw text "submenu placeholder"
-        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-        PangoLayout *layout = pango_cairo_create_layout(cr);
-        pango_layout_set_font_description(layout, desc);
-        const char *placeholder = "submenu placeholder";
-        pango_layout_set_text(layout, placeholder, -1);
-
-        int text_width, text_height;
-        pango_layout_get_pixel_size(layout, &text_width, &text_height);
-        cairo_move_to(cr,
-            submenu_x + (submenu_w - text_width) / 2,
-            submenu_y + (submenu_h - text_height) / 2
-        );
-        pango_cairo_show_layout(cr, layout);
-        g_object_unref(layout);
+        render_single_menu(cr, submenu, desc, submenu_x, submenu_y, subgeom.width, subgeom.height,
+                           padding, button_height, button_spacing, text_padding);
     }
 }
 
@@ -456,11 +470,18 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
     int logical_width = geom.width;
     int logical_height = geom.height;
 
-    // If a submenu placeholder might be needed, add room to the right
+    // If a submenu might be needed, add room to the right
     int total_width = logical_width;
+    int submenu_extra = 0;
     if (state->hovered_index >= 0 && state->hovered_index < (int)state->menu_items.size() &&
         !state->menu_items[state->hovered_index].submenu.empty()) {
-        total_width += 210 + 12 + 10; // submenu_w + submenu_pad + a little margin
+        const std::vector<MenuItem>& submenu = state->menu_items[state->hovered_index].submenu;
+        RenderedMenuGeometry subgeom = measure_menu_items(
+            submenu, desc, temp_cr, padding, text_padding,
+            200, button_height, button_spacing
+        );
+        submenu_extra = 12 + subgeom.width + 10;
+        total_width += submenu_extra;
     }
 
     cairo_destroy(temp_cr);
@@ -491,11 +512,6 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
 
     cairo_scale(cr, scale, scale);
 
-    // Only fill main menu area
-    // NOT the whole total_width, just logical_width (the rest is for submenu placeholder)
-    // The rest will be transparent (or black if compositor doesn't support alpha).
-    // This matches the dimensions in render_menu_items.
-    // The placeholder rectangle will be drawn on top.
     render_menu_items(cr, state->menu_items, desc, logical_width, logical_height,
         padding, button_height, button_spacing, text_padding, state->hovered_index);
 
