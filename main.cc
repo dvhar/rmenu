@@ -15,10 +15,16 @@ extern "C" {
 #include <vector>
 #include <string>
 #include <map>
+#include <algorithm>
 
 #ifndef BTN_LEFT
 #define BTN_LEFT 0x110
 #endif
+
+struct MenuItem {
+    std::string label;
+    std::vector<MenuItem> submenu;
+};
 
 struct wl_output_data {
     struct wl_output *output;
@@ -36,7 +42,7 @@ struct wl_state {
     struct zwlr_layer_surface_v1 *layer_surface;
     struct wl_buffer *buffer;
 
-    std::vector<std::string> menu_items;
+    std::vector<MenuItem> menu_items;
     bool running;
     int width;
     int height;
@@ -71,7 +77,6 @@ static void output_scale(void *data, struct wl_output *output, int32_t factor) {
     }
 }
 
-// Use the newer output listener if available, fallback otherwise
 static const struct wl_output_listener output_listener = {
     .geometry = output_geometry,
     .mode = output_mode,
@@ -106,22 +111,22 @@ static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t
 static void pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, uint32_t button, uint32_t state_wl) {
     wl_state *state = static_cast<wl_state*>(data);
     if (button == BTN_LEFT && state_wl == WL_POINTER_BUTTON_STATE_PRESSED) {
-        // Calculate which menu item was clicked
         const int button_height = 40;
         const int button_spacing = 5;
         const int padding = 10;
 
         int y = state->pointer_y; // pointer_y is in logical coordinates
 
-        // Find which item
+        // Only top-level items, only those with empty submenu are selectable
         for (size_t i = 0; i < state->menu_items.size(); ++i) {
             int item_y1 = padding + i * (button_height + button_spacing);
             int item_y2 = item_y1 + button_height;
             if (y >= item_y1 && y < item_y2) {
-                // Print selected item and exit
-                printf("%s\n", state->menu_items[i].c_str());
-                fflush(stdout);
-                state->running = false;
+                if (state->menu_items[i].submenu.empty()) {
+                    printf("%s\n", state->menu_items[i].label.c_str());
+                    fflush(stdout);
+                    state->running = false;
+                }
                 break;
             }
         }
@@ -229,82 +234,64 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
     .closed = layer_surface_closed,
 };
 
-static struct wl_buffer *create_buffer(struct wl_state *state) {
-    const int button_height = 40;
-    const int padding = 10;
-    const int button_spacing = 5;
-    const int text_padding = 10;
-    const int min_width = 200;
+struct RenderedMenuGeometry {
+    int width;
+    int height;
+};
 
-    int scale = state->chosen_scale;
-    // --- Everything below is in logical coordinates, scale at the end! ---
-
-    // Calculate width based on widest text
-    PangoFontDescription *desc = pango_font_description_from_string("Sans 12");
-    cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    cairo_t *temp_cr = cairo_create(temp_surface);
-
+static RenderedMenuGeometry measure_menu_items(
+    const std::vector<MenuItem>& items,
+    PangoFontDescription* desc,
+    cairo_t* cr,
+    int padding,
+    int text_padding,
+    int min_width,
+    int button_height,
+    int button_spacing
+) {
     int max_text_width = 0;
-    for (const auto& item : state->menu_items) {
-        PangoLayout *layout = pango_cairo_create_layout(temp_cr);
+    for (const auto& item : items) {
+        PangoLayout *layout = pango_cairo_create_layout(cr);
         pango_layout_set_font_description(layout, desc);
-        pango_layout_set_text(layout, item.c_str(), -1);
+
+        std::string label = item.label;
+        pango_layout_set_text(layout, label.c_str(), -1);
 
         int text_width, text_height;
         pango_layout_get_pixel_size(layout, &text_width, &text_height);
 
-        if (text_width > max_text_width) {
-            max_text_width = text_width;
+        int total_width = text_width + 2 * text_padding;
+        if (!item.submenu.empty()) {
+            total_width += 20; // space for arrow
         }
-
+        if (total_width > max_text_width) {
+            max_text_width = total_width;
+        }
         g_object_unref(layout);
     }
 
-    cairo_destroy(temp_cr);
-    cairo_surface_destroy(temp_surface);
-
-    // Logical size
-    int logical_width = max_text_width + 2 * padding + 2 * text_padding;
+    int logical_width = max_text_width + 2 * padding;
     if (logical_width < min_width) {
         logical_width = min_width;
     }
-    int logical_height = state->menu_items.size() * (button_height + button_spacing) + padding * 2 - button_spacing;
+    int logical_height = items.size() * (button_height + button_spacing) + padding * 2 - button_spacing;
 
-    // Physical size (actual buffer)
-    state->width = logical_width * scale;
-    state->height = logical_height * scale;
-    int stride = state->width * 4;
-    int size = stride * state->height;
+    RenderedMenuGeometry geom = { logical_width, logical_height };
+    return geom;
+}
 
-    // Create shared memory file
-    int fd = memfd_create("wayland-shm", 0);
-    if (fd < 0) {
-        return nullptr;
-    }
-    if (ftruncate(fd, size) < 0) {
-        close(fd);
-        return nullptr;
-    }
-    void *data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (data == MAP_FAILED) {
-        close(fd);
-        return nullptr;
-    }
-
-    // Create cairo surface and draw
-    cairo_surface_t *cairo_surface = cairo_image_surface_create_for_data(
-        static_cast<unsigned char *>(data), CAIRO_FORMAT_ARGB32, state->width, state->height, stride);
-    cairo_t *cr = cairo_create(cairo_surface);
-
-    // Scale Cairo context so all drawing is in logical coordinates
-    cairo_scale(cr, scale, scale);
-
-    // Draw background
-    cairo_set_source_rgb(cr, 0.15, 0.15, 0.15);
-    cairo_rectangle(cr, 0, 0, logical_width, logical_height);
-    cairo_fill(cr);
-
-    for (size_t i = 0; i < state->menu_items.size(); i++) {
+static void render_menu_items(
+    cairo_t* cr,
+    const std::vector<MenuItem>& items,
+    PangoFontDescription* desc,
+    int logical_width,
+    int padding,
+    int button_height,
+    int button_spacing,
+    int text_padding
+) {
+    for (size_t i = 0; i < items.size(); i++) {
+        const MenuItem* item = &items[i];
         int y = padding + i * (button_height + button_spacing);
 
         // Draw button background
@@ -322,22 +309,89 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
         cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
         PangoLayout *layout = pango_cairo_create_layout(cr);
         pango_layout_set_font_description(layout, desc);
-        pango_layout_set_text(layout, state->menu_items[i].c_str(), -1);
+        pango_layout_set_text(layout, item->label.c_str(), -1);
 
         int text_width, text_height;
         pango_layout_get_pixel_size(layout, &text_width, &text_height);
 
-        cairo_move_to(cr, padding + 10, y + (button_height - text_height) / 2);
+        cairo_move_to(cr, padding + text_padding, y + (button_height - text_height) / 2);
         pango_cairo_show_layout(cr, layout);
+
+        // Draw arrow for submenu
+        if (!item->submenu.empty()) {
+            double arrow_size = text_height * 0.5;
+            double arrow_x = logical_width - padding - text_padding - arrow_size;
+            double arrow_y = y + (button_height - arrow_size) / 2;
+            cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+            cairo_move_to(cr, arrow_x, arrow_y);
+            cairo_line_to(cr, arrow_x + arrow_size, arrow_y + arrow_size / 2);
+            cairo_line_to(cr, arrow_x, arrow_y + arrow_size);
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        }
 
         g_object_unref(layout);
     }
+}
+
+static struct wl_buffer *create_buffer(struct wl_state *state) {
+    const int button_height = 40;
+    const int padding = 10;
+    const int button_spacing = 5;
+    const int text_padding = 10;
+    const int min_width = 200;
+
+    int scale = state->chosen_scale;
+
+    PangoFontDescription *desc = pango_font_description_from_string("Sans 12");
+    cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    cairo_t *temp_cr = cairo_create(temp_surface);
+
+    RenderedMenuGeometry geom = measure_menu_items(
+        state->menu_items, desc, temp_cr, padding, text_padding,
+        min_width, button_height, button_spacing
+    );
+    int logical_width = geom.width;
+    int logical_height = geom.height;
+
+    cairo_destroy(temp_cr);
+    cairo_surface_destroy(temp_surface);
+
+    state->width = logical_width * scale;
+    state->height = logical_height * scale;
+    int stride = state->width * 4;
+    int size = stride * state->height;
+
+    int fd = memfd_create("wayland-shm", 0);
+    if (fd < 0) {
+        return nullptr;
+    }
+    if (ftruncate(fd, size) < 0) {
+        close(fd);
+        return nullptr;
+    }
+    void *data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (data == MAP_FAILED) {
+        close(fd);
+        return nullptr;
+    }
+
+    cairo_surface_t *cairo_surface = cairo_image_surface_create_for_data(
+        static_cast<unsigned char *>(data), CAIRO_FORMAT_ARGB32, state->width, state->height, stride);
+    cairo_t *cr = cairo_create(cairo_surface);
+
+    cairo_scale(cr, scale, scale);
+
+    cairo_set_source_rgb(cr, 0.15, 0.15, 0.15);
+    cairo_rectangle(cr, 0, 0, logical_width, logical_height);
+    cairo_fill(cr);
+
+    render_menu_items(cr, state->menu_items, desc, logical_width, padding, button_height, button_spacing, text_padding);
 
     pango_font_description_free(desc);
     cairo_destroy(cr);
     cairo_surface_destroy(cairo_surface);
 
-    // Create wayland buffer
     struct wl_shm_pool *pool = wl_shm_create_pool(state->shm, fd, size);
     struct wl_buffer *buffer = wl_shm_pool_create_buffer(
         pool, 0, state->width, state->height, stride, WL_SHM_FORMAT_ARGB8888);
@@ -349,6 +403,36 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
     return buffer;
 }
 
+static void parse_menu(std::vector<MenuItem>& out) {
+    std::vector<std::vector<MenuItem>*> stack;
+    stack.push_back(&out); // stack[0] is root
+
+    char line[256];
+    while (fgets(line, sizeof(line), stdin)) {
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') {
+            line[len - 1] = '\0';
+        }
+
+        int tabs = 0;
+        while (line[tabs] == '\t') ++tabs;
+
+        char* start = line + tabs;
+        if (*start == '\0') continue;
+
+        MenuItem item;
+        item.label = std::string(start);
+
+        while ((int)stack.size() <= tabs)
+            stack.push_back(&stack.back()->back().submenu);
+
+        while ((int)stack.size() > tabs + 1)
+            stack.pop_back();
+
+        stack.back()->push_back(item);
+    }
+}
+
 int main() {
     struct wl_state state = {};
     state.running = true;
@@ -357,40 +441,25 @@ int main() {
     state.chosen_output = nullptr;
     state.chosen_scale = 1;
 
-    // Read menu items from stdin
-    char line[256];
-    while (fgets(line, sizeof(line), stdin)) {
-        // Remove newline
-        size_t len = strlen(line);
-        if (len > 0 && line[len - 1] == '\n') {
-            line[len - 1] = '\0';
-        }
-        if (strlen(line) > 0) {
-            state.menu_items.push_back(std::string(line));
-        }
-    }
+    parse_menu(state.menu_items);
 
     if (state.menu_items.empty()) {
         fprintf(stderr, "No menu items provided on stdin\n");
         return 1;
     }
 
-    // Connect to Wayland display
     state.display = wl_display_connect(nullptr);
     if (!state.display) {
         fprintf(stderr, "Failed to connect to Wayland display\n");
         return 1;
     }
 
-    // Get registry and bind globals
     state.registry = wl_display_get_registry(state.display);
     wl_registry_add_listener(state.registry, &registry_listener, &state);
-    wl_display_roundtrip(state.display); // Discover globals
-    wl_display_roundtrip(state.display); // Ensure all output events delivered
+    wl_display_roundtrip(state.display);
+    wl_display_roundtrip(state.display);
 
-    // Choose output and scale
     if (!state.outputs_by_name.empty()) {
-        // Pick the first output
         auto it = state.outputs_by_name.begin();
         state.chosen_output = it->second.output;
         state.chosen_scale = (it->second.scale > 0) ? it->second.scale : 1;
@@ -403,9 +472,7 @@ int main() {
         return 1;
     }
 
-    // Create surface and layer surface
     state.surface = wl_compositor_create_surface(state.compositor);
-    // Set buffer scale BEFORE attaching any buffer!
     wl_surface_set_buffer_scale(state.surface, state.chosen_scale);
 
     state.layer_surface = zwlr_layer_shell_v1_get_layer_surface(
@@ -413,7 +480,7 @@ int main() {
         ZWLR_LAYER_SHELL_V1_LAYER_TOP, "menu");
 
     zwlr_layer_surface_v1_set_size(state.layer_surface,
-        state.width / state.chosen_scale, state.height / state.chosen_scale); // Logical size
+        state.width / state.chosen_scale, state.height / state.chosen_scale);
     zwlr_layer_surface_v1_set_anchor(state.layer_surface,
         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
     zwlr_layer_surface_v1_add_listener(state.layer_surface, &layer_surface_listener, &state);
@@ -421,7 +488,6 @@ int main() {
     wl_surface_commit(state.surface);
     wl_display_roundtrip(state.display);
 
-    // Create and attach buffer
     state.buffer = create_buffer(&state);
     if (!state.buffer) {
         fprintf(stderr, "Failed to create buffer\n");
@@ -432,12 +498,10 @@ int main() {
     wl_surface_damage_buffer(state.surface, 0, 0, state.width, state.height);
     wl_surface_commit(state.surface);
 
-    // Main loop
     while (state.running && wl_display_dispatch(state.display) != -1) {
         // Event loop
     }
 
-    // Cleanup
     if (state.pointer) wl_pointer_destroy(state.pointer);
     if (state.seat) wl_seat_destroy(state.seat);
     if (state.buffer) wl_buffer_destroy(state.buffer);
