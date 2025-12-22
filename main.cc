@@ -16,6 +16,10 @@ extern "C" {
 #include <string>
 #include <map>
 
+#ifndef BTN_LEFT
+#define BTN_LEFT 0x110
+#endif
+
 struct wl_output_data {
     struct wl_output *output;
     int32_t scale;
@@ -41,7 +45,16 @@ struct wl_state {
     std::map<uint32_t, wl_output_data> outputs_by_name;
     struct wl_output *chosen_output;
     int chosen_scale;
+
+    // Pointer/seat
+    struct wl_seat *seat = nullptr;
+    struct wl_pointer *pointer = nullptr;
+    int pointer_x = 0; // in logical coords
+    int pointer_y = 0; // in logical coords
+    bool pointer_inside = false;
 };
+
+// ... output listeners and registry as before ...
 
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
 static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
@@ -70,6 +83,93 @@ static const struct wl_output_listener output_listener = {
 #endif
 };
 
+// ---------------- Seat/Pointer handling below ------------------
+
+static void pointer_enter(void *data, struct wl_pointer *, uint32_t, struct wl_surface *, wl_fixed_t sx, wl_fixed_t sy) {
+    wl_state *state = static_cast<wl_state*>(data);
+    state->pointer_inside = true;
+    state->pointer_x = wl_fixed_to_double(sx);
+    state->pointer_y = wl_fixed_to_double(sy);
+}
+
+static void pointer_leave(void *data, struct wl_pointer *, uint32_t, struct wl_surface *) {
+    wl_state *state = static_cast<wl_state*>(data);
+    state->pointer_inside = false;
+}
+
+static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t sx, wl_fixed_t sy) {
+    wl_state *state = static_cast<wl_state*>(data);
+    state->pointer_x = wl_fixed_to_double(sx);
+    state->pointer_y = wl_fixed_to_double(sy);
+}
+
+static void pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, uint32_t button, uint32_t state_wl) {
+    wl_state *state = static_cast<wl_state*>(data);
+    if (button == BTN_LEFT && state_wl == WL_POINTER_BUTTON_STATE_PRESSED) {
+        // Calculate which menu item was clicked
+        const int button_height = 40;
+        const int button_spacing = 5;
+        const int padding = 10;
+
+        int y = state->pointer_y; // pointer_y is in logical coordinates
+
+        // Find which item
+        for (size_t i = 0; i < state->menu_items.size(); ++i) {
+            int item_y1 = padding + i * (button_height + button_spacing);
+            int item_y2 = item_y1 + button_height;
+            if (y >= item_y1 && y < item_y2) {
+                // Print selected item and exit
+                printf("%s\n", state->menu_items[i].c_str());
+                fflush(stdout);
+                state->running = false;
+                break;
+            }
+        }
+    }
+}
+
+static void pointer_axis(void *, struct wl_pointer *, uint32_t, uint32_t, wl_fixed_t) {}
+static void pointer_frame(void *, struct wl_pointer *) {}
+static void pointer_axis_source(void *, struct wl_pointer *, uint32_t) {}
+static void pointer_axis_stop(void *, struct wl_pointer *, uint32_t, uint32_t) {}
+static void pointer_axis_discrete(void *, struct wl_pointer *, uint32_t, int32_t) {}
+
+static const struct wl_pointer_listener pointer_listener = {
+    .enter = pointer_enter,
+    .leave = pointer_leave,
+    .motion = pointer_motion,
+    .button = pointer_button,
+    .axis = pointer_axis,
+    .frame = pointer_frame,
+    .axis_source = pointer_axis_source,
+    .axis_stop = pointer_axis_stop,
+    .axis_discrete = pointer_axis_discrete,
+};
+
+static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
+    wl_state *state = static_cast<wl_state*>(data);
+    if (caps & WL_SEAT_CAPABILITY_POINTER) {
+        if (!state->pointer) {
+            state->pointer = wl_seat_get_pointer(seat);
+            wl_pointer_add_listener(state->pointer, &pointer_listener, state);
+        }
+    } else {
+        if (state->pointer) {
+            wl_pointer_destroy(state->pointer);
+            state->pointer = nullptr;
+        }
+    }
+}
+static void seat_name(void *, struct wl_seat *, const char *) {}
+
+static const struct wl_seat_listener seat_listener = {
+    .capabilities = seat_capabilities,
+#if WL_SEAT_NAME_SINCE_VERSION
+    .name = seat_name,
+#endif
+};
+// -----------------------------------------------------------------
+
 static void registry_global(void *data, struct wl_registry *registry,
                            uint32_t name, const char *interface, uint32_t version) {
     wl_state *state = static_cast<wl_state *>(data);
@@ -92,6 +192,10 @@ static void registry_global(void *data, struct wl_registry *registry,
         od.name = name;
         wl_output_add_listener(output, &output_listener, state);
         state->outputs_by_name[name] = od;
+    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
+        state->seat = static_cast<struct wl_seat*>(wl_registry_bind(
+            registry, name, &wl_seat_interface, 5));
+        wl_seat_add_listener(state->seat, &seat_listener, state);
     }
 }
 
@@ -334,6 +438,8 @@ int main() {
     }
 
     // Cleanup
+    if (state.pointer) wl_pointer_destroy(state.pointer);
+    if (state.seat) wl_seat_destroy(state.seat);
     if (state.buffer) wl_buffer_destroy(state.buffer);
     if (state.layer_surface) zwlr_layer_surface_v1_destroy(state.layer_surface);
     if (state.surface) wl_surface_destroy(state.surface);
