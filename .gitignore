@@ -1,0 +1,15 @@
+# Ignore build/cache output
+.cache/
+main.o
+hello-world
+
+# Ignore protocol generated files
+wlr-layer-shell-unstable-v1-client-protocol.c
+wlr-layer-shell-unstable-v1-client-protocol.h
+wlr-layer-shell-unstable-v1-client-protocol.o
+xdg-shell-client-protocol.c
+xdg-shell-client-protocol.h
+xdg-shell-client-protocol.o
+
+# Ignore compile_commands.json (build system output)
+compile_commands.json
