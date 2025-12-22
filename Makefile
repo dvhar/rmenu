@@ -8,7 +8,7 @@ INCLUDES = $(shell pkg-config --cflags wayland-client cairo pango pangocairo)
 WLR_PROTOCOL = wlr-layer-shell-unstable-v1.xml
 XDG_SHELL_PROTOCOL = xdg-shell.xml
 
-all: hello-world
+all: rmenu
 
 # Generate xdg-shell protocol files
 xdg-shell-client-protocol.h:
@@ -37,10 +37,10 @@ main.o: main.cc wlr-layer-shell-unstable-v1-client-protocol.h xdg-shell-client-p
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c main.cc -o $@
 
 # Link
-hello-world: main.o wlr-layer-shell-unstable-v1-client-protocol.o xdg-shell-client-protocol.o
+rmenu: main.o wlr-layer-shell-unstable-v1-client-protocol.o xdg-shell-client-protocol.o
 	$(CXX) $(CXXFLAGS) $^ $(LIBS) -o $@
 
 clean:
-	rm -f hello-world *.o wlr-layer-shell-unstable-v1-client-protocol.h wlr-layer-shell-unstable-v1-client-protocol.c xdg-shell-client-protocol.h xdg-shell-client-protocol.c
+	rm -f rmenu *.o wlr-layer-shell-unstable-v1-client-protocol.h wlr-layer-shell-unstable-v1-client-protocol.c xdg-shell-client-protocol.h xdg-shell-client-protocol.c
 
 .PHONY: all clean
