@@ -71,7 +71,7 @@ const int button_height = 40;
 const int button_spacing = 5;
 const int text_padding = 10;
 const int min_width = 200;
-const int submenu_pad = 12;
+const int submenu_pad = 0;
 
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
 static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
@@ -109,6 +109,23 @@ struct RenderedMenuGeometry {
     int width;
     int height;
 };
+
+static bool pointer_in_submenu(const std::vector<MenuItem>& items, int hovered_index, int px, int py) {
+    if (hovered_index < 0 || hovered_index >= (int)items.size() || items[hovered_index].submenu.empty())
+        return false;
+    const auto& submenu = items[hovered_index].submenu;
+    if (submenu.empty()) return false;
+
+    int min_x = submenu[0].x, min_y = submenu[0].y;
+    int max_x = submenu[0].x + submenu[0].w, max_y = submenu[0].y + submenu[0].h;
+    for (const auto& it : submenu) {
+        if (it.x < min_x) min_x = it.x;
+        if (it.y < min_y) min_y = it.y;
+        if (it.x + it.w > max_x) max_x = it.x + it.w;
+        if (it.y + it.h > max_y) max_y = it.y + it.h;
+    }
+    return px >= min_x && px < max_x && py >= min_y && py < max_y;
+}
 
 // Recursive geometry assignment
 static RenderedMenuGeometry measure_menu_items(
@@ -206,6 +223,9 @@ static void pointer_enter(void *data, struct wl_pointer *, uint32_t, struct wl_s
     state->pointer_y = wl_fixed_to_double(sy);
 
     int new_hovered = find_hovered_index(state->menu_items, state->pointer_x, state->pointer_y);
+    if (state->hovered_index >= 0 && pointer_in_submenu(state->menu_items, state->hovered_index, state->pointer_x, state->pointer_y)) {
+        new_hovered = state->hovered_index;
+    }
     if (state->hovered_index != new_hovered) {
         state->hovered_index = new_hovered;
         if (state->buffer) wl_buffer_destroy(state->buffer);
@@ -235,6 +255,9 @@ static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t
     state->pointer_y = wl_fixed_to_double(sy);
 
     int new_hovered = find_hovered_index(state->menu_items, state->pointer_x, state->pointer_y);
+    if (state->hovered_index >= 0 && pointer_in_submenu(state->menu_items, state->hovered_index, state->pointer_x, state->pointer_y)) {
+        new_hovered = state->hovered_index;
+    }
     if (state->hovered_index != new_hovered) {
         state->hovered_index = new_hovered;
         if (state->buffer) wl_buffer_destroy(state->buffer);
