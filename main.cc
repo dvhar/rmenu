@@ -63,6 +63,14 @@ struct wl_state {
     int hovered_index = -1; // top-level menu index hovered, or -1 if none
 };
 
+PangoFontDescription *desc;
+const int padding = 10;
+const int button_height = 40;
+const int button_spacing = 5;
+const int text_padding = 10;
+const int min_width = 200;
+const int submenu_pad = 12;
+
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
 static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
 static void output_done(void*, struct wl_output*) {}
@@ -98,9 +106,6 @@ static void pointer_enter(void *data, struct wl_pointer *, uint32_t, struct wl_s
     state->pointer_y = wl_fixed_to_double(sy);
 
     // Update hovered index and redraw if necessary
-    const int button_height = 40;
-    const int button_spacing = 5;
-    const int padding = 10;
     int y = state->pointer_y;
 
     int new_hovered = -1;
@@ -142,9 +147,6 @@ static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t
     state->pointer_y = wl_fixed_to_double(sy);
 
     // Update hovered index and redraw if necessary
-    const int button_height = 40;
-    const int button_spacing = 5;
-    const int padding = 10;
     int y = state->pointer_y;
 
     int new_hovered = -1;
@@ -170,9 +172,6 @@ static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t
 static void pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, uint32_t button, uint32_t state_wl) {
     wl_state *state = static_cast<wl_state*>(data);
     if (button == BTN_LEFT && state_wl == WL_POINTER_BUTTON_STATE_PRESSED) {
-        const int button_height = 40;
-        const int button_spacing = 5;
-        const int padding = 10;
 
         int y = state->pointer_y;
 
@@ -298,13 +297,7 @@ struct RenderedMenuGeometry {
 
 static RenderedMenuGeometry measure_menu_items(
     const std::vector<MenuItem>& items,
-    PangoFontDescription* desc,
-    cairo_t* cr,
-    int padding,
-    int text_padding,
-    int min_width,
-    int button_height,
-    int button_spacing
+    cairo_t* cr
 ) {
     int max_text_width = 0;
     for (const auto& item : items) {
@@ -340,15 +333,10 @@ static RenderedMenuGeometry measure_menu_items(
 static void render_single_menu(
     cairo_t* cr,
     const std::vector<MenuItem>& items,
-    PangoFontDescription* desc,
     int x,
     int y,
     int menu_width,
-    int menu_height,
-    int padding,
-    int button_height,
-    int button_spacing,
-    int text_padding
+    int menu_height
 ) {
     // Draw menu background
     cairo_set_source_rgb(cr, 0.20, 0.22, 0.28);
@@ -402,13 +390,8 @@ static void render_single_menu(
 static void render_menu_items(
     cairo_t* cr,
     const std::vector<MenuItem>& items,
-    PangoFontDescription* desc,
     int logical_width,
     int menu_height,
-    int padding,
-    int button_height,
-    int button_spacing,
-    int text_padding,
     int hovered_index
 ) {
     // Draw main menu background
@@ -417,56 +400,40 @@ static void render_menu_items(
     cairo_fill(cr);
 
     // Render main menu items
-    render_single_menu(cr, items, desc, 0, 0, logical_width, menu_height,
-                       padding, button_height, button_spacing, text_padding);
+    render_single_menu(cr, items, 0, 0, logical_width, menu_height);
 
     // Render submenu if hovered
     if (hovered_index >= 0 && hovered_index < (int)items.size() && !items[hovered_index].submenu.empty()) {
         // Submenu geometry
         const std::vector<MenuItem>& submenu = items[hovered_index].submenu;
         // For simplicity, use same button sizes/padding as main menu
-        int submenu_pad = 12;
         int submenu_x = logical_width + submenu_pad;
         int submenu_y = padding + hovered_index * (button_height + button_spacing);
 
         // Measure submenu size
-        RenderedMenuGeometry subgeom;
-        {
-            cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-            cairo_t *temp_cr = cairo_create(temp_surface);
-            subgeom = measure_menu_items(submenu, desc, temp_cr, padding, text_padding,
-                                         200, button_height, button_spacing);
-            cairo_destroy(temp_cr);
-            cairo_surface_destroy(temp_surface);
-        }
+        cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        cairo_t *temp_cr = cairo_create(temp_surface);
+        RenderedMenuGeometry subgeom = measure_menu_items(submenu, temp_cr);
+        cairo_destroy(temp_cr);
+        cairo_surface_destroy(temp_surface);
 
         // Only draw within the buffer, so don't overflow vertically
         int max_submenu_y = std::max(0, menu_height - subgeom.height);
         if (submenu_y > max_submenu_y) submenu_y = max_submenu_y;
 
-        render_single_menu(cr, submenu, desc, submenu_x, submenu_y, subgeom.width, subgeom.height,
-                           padding, button_height, button_spacing, text_padding);
+        render_single_menu(cr, submenu, submenu_x, submenu_y, subgeom.width, subgeom.height);
     }
 }
 
 static struct wl_buffer *create_buffer(struct wl_state *state) {
-    const int button_height = 40;
-    const int padding = 10;
-    const int button_spacing = 5;
-    const int text_padding = 10;
-    const int min_width = 200;
 
     int scale = state->chosen_scale;
 
-    PangoFontDescription *desc = pango_font_description_from_string("Sans 12");
     cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
     cairo_t *temp_cr = cairo_create(temp_surface);
 
     // Menu width/height for the main menu only
-    RenderedMenuGeometry geom = measure_menu_items(
-        state->menu_items, desc, temp_cr, padding, text_padding,
-        min_width, button_height, button_spacing
-    );
+    RenderedMenuGeometry geom = measure_menu_items(state->menu_items, temp_cr);
     int logical_width = geom.width;
     int logical_height = geom.height;
 
@@ -476,10 +443,7 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
     if (state->hovered_index >= 0 && state->hovered_index < (int)state->menu_items.size() &&
         !state->menu_items[state->hovered_index].submenu.empty()) {
         const std::vector<MenuItem>& submenu = state->menu_items[state->hovered_index].submenu;
-        RenderedMenuGeometry subgeom = measure_menu_items(
-            submenu, desc, temp_cr, padding, text_padding,
-            200, button_height, button_spacing
-        );
+        RenderedMenuGeometry subgeom = measure_menu_items(submenu, temp_cr);
         submenu_extra = 12 + subgeom.width + 10;
         total_width += submenu_extra;
     }
@@ -512,10 +476,8 @@ static struct wl_buffer *create_buffer(struct wl_state *state) {
 
     cairo_scale(cr, scale, scale);
 
-    render_menu_items(cr, state->menu_items, desc, logical_width, logical_height,
-        padding, button_height, button_spacing, text_padding, state->hovered_index);
+    render_menu_items(cr, state->menu_items, logical_width, logical_height, state->hovered_index);
 
-    pango_font_description_free(desc);
     cairo_destroy(cr);
     cairo_surface_destroy(cairo_surface);
 
@@ -625,11 +587,13 @@ int main() {
     wl_surface_attach(state.surface, state.buffer, 0, 0);
     wl_surface_damage_buffer(state.surface, 0, 0, state.width, state.height);
     wl_surface_commit(state.surface);
+    desc = pango_font_description_from_string("Sans 12");
 
     while (state.running && wl_display_dispatch(state.display) != -1) {
         // Event loop
     }
 
+    pango_font_description_free(desc);
     if (state.pointer) wl_pointer_destroy(state.pointer);
     if (state.seat) wl_seat_destroy(state.seat);
     if (state.buffer) wl_buffer_destroy(state.buffer);
