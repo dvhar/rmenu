@@ -67,7 +67,6 @@ struct wl_state {
 };
 
 PangoFontDescription *desc;
-const int padding = 10;
 const int button_height = 40;
 const int button_spacing = 5;
 const int text_padding = 10;
@@ -136,23 +135,21 @@ static RenderedMenuGeometry measure_menu_items(
         if (total_width > max_text_width) max_text_width = total_width;
     }
 
-    int logical_width = max_text_width + 2 * padding;
+    int logical_width = max_text_width;
     if (logical_width < min_width) logical_width = min_width;
-    int logical_height = items.size() * (button_height + button_spacing) + padding * 2 - button_spacing;
+    int logical_height = items.size() * (button_height + button_spacing) - button_spacing;
 
     // Assign geometry to each MenuItem
     for (size_t i = 0; i < items.size(); ++i) {
-        items[i].x = base_x + padding;
-        items[i].y = base_y + padding + i * (button_height + button_spacing);
-        items[i].w = logical_width - 2 * padding;
+        items[i].x = base_x;
+        items[i].y = base_y + i * (button_height + button_spacing);
+        items[i].w = logical_width;
         items[i].h = button_height;
     }
 
     // Recursively assign for submenus
     for (size_t i = 0; i < items.size(); ++i) {
         if (!items[i].submenu.empty()) {
-            // Submenu x & y relative to parent
-            // They appear to the right of the main menu, starting at the item position
             cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
             cairo_t *temp_cr = cairo_create(temp_surface);
             RenderedMenuGeometry subgeom = measure_menu_items(
@@ -442,7 +439,6 @@ static void render_menu_items(
         if (submenu.empty()) return;
 
         // Get submenu position and geometry from the first item of the submenu
-        // We know measure_menu_items will have already been called recursively
         const MenuItem& parent = items[hovered_index];
         int submenu_x = parent.x + parent.w + submenu_pad;
         int submenu_y = parent.y;
