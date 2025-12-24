@@ -91,22 +91,25 @@ class MenuItem {
     wl_state* state;
     int last_rendered = 0;
     int x = 0, y = 0, w = 0, h = 0;
+    bool is_separator = false;
     int min_x() const { return x; }
     int max_x() const { return x+w; }
     int min_y() const { return y; }
     int max_y() const { return y+h; }
     bool in_x(int px) const { return px >= x && px <= max_x(); }
     bool in_y(int py) const { return py >= y && py <= max_y(); }
-    bool in_box() const { return last_rendered == state->current_frame &&
+    bool in_box() const { return !is_separator &&
+      last_rendered == state->current_frame &&
       in_x(state->pointer_x) && in_y(state->pointer_y); }
 };
 
 
 PangoFontDescription *desc;
-const int button_height = 40;
+const int button_height = 30;
 const int button_spacing = 5;
-const int text_padding = 10;
-const int min_width = 200;
+const int text_padding = 50;
+const int min_width = 100;
+const int separator_size = 4;
 
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
 static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
@@ -213,6 +216,10 @@ static RenderedMenuGeometry measure_menu_items(
     std::vector<std::pair<int, int>> text_sizes;
 
     for (auto& item : menu_list) {
+        if (item.is_separator) {
+            text_sizes.push_back({0, 0});
+            continue;
+        }
         PangoLayout *layout = pango_cairo_create_layout(cr);
         pango_layout_set_font_description(layout, desc);
         pango_layout_set_text(layout, item.label.c_str(), -1);
@@ -229,15 +236,24 @@ static RenderedMenuGeometry measure_menu_items(
 
     int logical_width = max_text_width;
     if (logical_width < min_width) logical_width = min_width;
-    int logical_height = menu_list.size() * (button_height + button_spacing) - button_spacing;
 
-    // Assign geometry to each MenuItem
+    // Compute the y position for each item, accounting for separators
+    int y = base_y;
     for (size_t i = 0; i < menu_list.size(); ++i) {
-        menu_list[i].x = base_x;
-        menu_list[i].y = base_y + i * (button_height + button_spacing);
-        menu_list[i].w = logical_width;
-        menu_list[i].h = button_height;
+        auto& item = menu_list[i];
+        item.x = base_x;
+        item.y = y;
+        if (item.is_separator) {
+            item.w = logical_width;
+            item.h = separator_size/2;
+        } else {
+            item.w = logical_width;
+            item.h = button_height;
+        }
+        y += item.h + button_spacing;
     }
+
+    int logical_height = y - base_y - button_spacing;
 
     // Recursively assign for submenus
     for (size_t i = 0; i < menu_list.size(); ++i) {
@@ -265,6 +281,7 @@ static RenderedMenuGeometry measure_menu_items(
 
 bool wl_state::handle_menu_click(MenuList& menu_list) {
     for (auto& item : menu_list) {
+        if (item.is_separator) continue;
         if (item.in_box()) {
             if (item.output.empty()) {
               printf("%s\n", item.label.c_str());
@@ -480,6 +497,17 @@ static void render_menu_branch(
         auto& item = menu_list[i];
         item.last_rendered = state->current_frame;
 
+        if (item.is_separator) {
+             //Draw horizontal line in the center of the separator box
+            double sep_y = item.y;
+            cairo_set_source_rgb(cr, 0.5, 0.5, 0.55); // color for separator
+            cairo_set_line_width(cr, separator_size);
+            cairo_move_to(cr, item.x + 5, sep_y);
+            cairo_line_to(cr, item.x + item.w - 5, sep_y);
+            cairo_stroke(cr);
+            continue;
+        }
+
         // Highlight hovered item at this level
         bool is_hovered = (hovered_path.size() > level && hovered_path[level] == (int)i);
 
@@ -651,7 +679,7 @@ static struct wl_buffer *create_buffer(wl_state *state) {
 static void parse_menu(wl_state* state) {
     std::vector<MenuList*> stack;
     stack.push_back(&state->menu);
-
+    bool still_in_submenu = false;
     char line[256];
     while (fgets(line, sizeof(line), stdin)) {
         size_t len = strlen(line);
@@ -663,10 +691,28 @@ static void parse_menu(wl_state* state) {
         while (line[tabs] == '\t') ++tabs;
 
         char* start = line + tabs;
-        if (*start == '\0') continue;
+
+        // Handle empty line: add a separator
+        if (*start == '\0') {
+            if (still_in_submenu) {
+              fprintf(stderr, "Separator is only valid for top-level menu\n");
+              exit(1);
+            }
+            MenuItem sep;
+            sep.state = state;
+            sep.is_separator = true;
+            sep.submenu = MenuList();
+            while ((int)stack.size() <= tabs)
+                stack.push_back(&stack.back()->items.back().submenu);
+            while ((int)stack.size() > tabs + 1)
+                stack.pop_back();
+            stack.back()->items.push_back(sep);
+            continue;
+        }
 
         MenuItem item;
         item.state = state;
+
         char* midtab = strchr(start, '\t');
         if (midtab) {
             // Split into label and output
@@ -685,6 +731,7 @@ static void parse_menu(wl_state* state) {
             stack.pop_back();
 
         stack.back()->items.push_back(item);
+        still_in_submenu = tabs > 0;
     }
 }
 
@@ -695,7 +742,7 @@ static void parse_menu(wl_state* state) {
 int main() {
     wl_state state = {};
     state.running = true;
-    state.width = 200;
+    state.width = min_width;
     state.height = 100;
     state.chosen_output = nullptr;
     state.chosen_scale = 1;
