@@ -282,7 +282,7 @@ static RenderedMenuGeometry measure_menu_items(
 bool wl_state::handle_menu_click(MenuList& menu_list) {
     for (auto& item : menu_list) {
         if (item.is_separator) continue;
-        if (item.in_box()) {
+        if (item.in_box() && item.submenu.empty()) {
             if (item.output.empty()) {
               printf("%s\n", item.label.c_str());
             } else {
@@ -291,12 +291,8 @@ bool wl_state::handle_menu_click(MenuList& menu_list) {
             fflush(stdout);
             running = false;
             return true;
-        } else {
-            if (!item.submenu.empty()) {
-                if (handle_menu_click(item.submenu)) {
-                  return true;
-                }
-            }
+        } else if (!item.submenu.empty() && handle_menu_click(item.submenu)) {
+            return true;
         }
     }
     return false;
@@ -679,7 +675,7 @@ static struct wl_buffer *create_buffer(wl_state *state) {
 static void parse_menu(wl_state* state) {
     std::vector<MenuList*> stack;
     stack.push_back(&state->menu);
-    bool still_in_submenu = false;
+    bool prev_was_empty = false;
     char line[256];
     while (fgets(line, sizeof(line), stdin)) {
         size_t len = strlen(line);
@@ -694,10 +690,7 @@ static void parse_menu(wl_state* state) {
 
         // Handle empty line: add a separator
         if (*start == '\0') {
-            if (still_in_submenu) {
-              fprintf(stderr, "Separator is only valid for top-level menu\n");
-              exit(1);
-            }
+            prev_was_empty = true;
             MenuItem sep;
             sep.state = state;
             sep.is_separator = true;
@@ -708,6 +701,10 @@ static void parse_menu(wl_state* state) {
                 stack.pop_back();
             stack.back()->items.push_back(sep);
             continue;
+        }
+        if (tabs > 0 && prev_was_empty) {
+            fprintf(stderr, "No separators in submenus\n");
+            exit(1);
         }
 
         MenuItem item;
@@ -731,7 +728,7 @@ static void parse_menu(wl_state* state) {
             stack.pop_back();
 
         stack.back()->items.push_back(item);
-        still_in_submenu = tabs > 0;
+        prev_was_empty = false;
     }
 }
 
