@@ -24,6 +24,7 @@ extern "C" {
 class MenuItem {
   public:
     std::string label;
+    std::string output;
     std::vector<MenuItem> submenu;
 
     // Geometry in logical coordinates
@@ -244,10 +245,14 @@ static RenderedMenuGeometry measure_menu_items(
 bool wl_state::handle_menu_click(const std::vector<MenuItem>& items) {
     for (const auto& item : items) {
         if (item.in_box(pointer_x, pointer_y)) {
+            if (item.output.empty()) {
               printf("%s\n", item.label.c_str());
-              fflush(stdout);
-              running = false;
-              return true;
+            } else {
+              printf("%s\n", item.output.c_str());
+            }
+            fflush(stdout);
+            running = false;
+            return true;
         } else {
             if (!item.submenu.empty()) {
                 if (handle_menu_click(item.submenu)) {
@@ -637,7 +642,15 @@ static void parse_menu(std::vector<MenuItem>& out) {
         if (*start == '\0') continue;
 
         MenuItem item;
-        item.label = std::string(start);
+        char* midtab = strchr(start, '\t');
+        if (midtab) {
+            // Split into label and output
+            *midtab = '\0';
+            item.label = std::string(start);
+            item.output = std::string(midtab + 1);
+        } else {
+            item.label = std::string(start);
+        }
 
         while ((int)stack.size() <= tabs)
             stack.push_back(&stack.back()->back().submenu);
