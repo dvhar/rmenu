@@ -77,6 +77,7 @@ class wl_state {
 
     std::vector<int> find_hovered_path();
     std::vector<int> find_submenu_path();
+    bool handle_menu_click(const std::vector<MenuItem>& items);
 };
 
 PangoFontDescription *desc;
@@ -240,14 +241,22 @@ static RenderedMenuGeometry measure_menu_items(
 // Pointer event helpers
 //=====================
 
-static int find_clicked_index(const std::vector<MenuItem>& items, int px, int py) {
-    for (size_t i = 0; i < items.size(); ++i) {
-        const MenuItem& item = items[i];
-        if (item.in_box(px, py)) {
-            return (int)i;
+bool wl_state::handle_menu_click(const std::vector<MenuItem>& items) {
+    for (const auto& item : items) {
+        if (item.in_box(pointer_x, pointer_y)) {
+              printf("%s\n", item.label.c_str());
+              fflush(stdout);
+              running = false;
+              return true;
+        } else {
+            if (!item.submenu.empty()) {
+                if (handle_menu_click(item.submenu)) {
+                  return true;
+                }
+            }
         }
     }
-    return -1;
+    return false;
 }
 
 //=====================
@@ -303,14 +312,7 @@ static void pointer_leave(void *data, struct wl_pointer *, uint32_t, struct wl_s
 static void pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, uint32_t button, uint32_t state_wl) {
     wl_state *state = static_cast<wl_state*>(data);
     if (button == BTN_LEFT && state_wl == WL_POINTER_BUTTON_STATE_PRESSED) {
-        int clicked = find_clicked_index(state->menu_items, state->pointer_x, state->pointer_y);
-        if (clicked >= 0 && (int)state->menu_items.size() > clicked) {
-            if (state->menu_items[clicked].submenu.empty()) {
-                printf("%s\n", state->menu_items[clicked].label.c_str());
-                fflush(stdout);
-                state->running = false;
-            }
-        }
+        state->handle_menu_click(state->menu_items);
     }
 }
 
