@@ -103,13 +103,8 @@ class MenuItem {
       in_x(state->pointer_x) && in_y(state->pointer_y); }
 };
 
-
 PangoFontDescription *desc;
-const int button_height = 30;
-const int button_spacing = 5;
-const int text_padding = 50;
-const int min_width = 100;
-const int separator_size = 4;
+#include "config.h"
 
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
 static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
@@ -245,7 +240,7 @@ static RenderedMenuGeometry measure_menu_items(
         item.y = y;
         if (item.is_separator) {
             item.w = logical_width;
-            item.h = separator_size/2;
+            item.h = separator_size;
         } else {
             item.w = logical_width;
             item.h = button_height;
@@ -484,7 +479,7 @@ static void render_menu_branch(
     int menu_height = max_y - min_y;
 
     // Draw menu background
-    cairo_set_source_rgb(cr, 0.20, 0.22, 0.28);
+    cairo_set_source_rgb(cr, menu_back[0], menu_back[1], menu_back[1]);
     cairo_rectangle(cr, min_x, min_y, menu_width, menu_height);
     cairo_fill(cr);
 
@@ -496,10 +491,10 @@ static void render_menu_branch(
         if (item.is_separator) {
              //Draw horizontal line in the center of the separator box
             double sep_y = item.y;
-            cairo_set_source_rgb(cr, 0.5, 0.5, 0.55); // color for separator
+            cairo_set_source_rgb(cr, sep_color[0], sep_color[1], sep_color[2]);
             cairo_set_line_width(cr, separator_size);
-            cairo_move_to(cr, item.x + 5, sep_y);
-            cairo_line_to(cr, item.x + item.w - 5, sep_y);
+            cairo_move_to(cr, item.x + 5, sep_y + separator_size/2.0);
+            cairo_line_to(cr, item.x + item.w - 5, sep_y + separator_size/2.0);
             cairo_stroke(cr);
             continue;
         }
@@ -509,21 +504,21 @@ static void render_menu_branch(
 
         // Button background color
         if (is_hovered)
-            cairo_set_source_rgb(cr, 0.35, 0.35, 0.40);
+            cairo_set_source_rgb(cr, hovered_color[0], hovered_color[1], hovered_color[2]);
         else
-            cairo_set_source_rgb(cr, 0.3, 0.3, 0.35);
+            cairo_set_source_rgb(cr, button_color[0], button_color[1], button_color[2]);
 
         cairo_rectangle(cr, item.x, item.y, item.w, item.h);
         cairo_fill(cr);
 
         // Draw button border
-        cairo_set_source_rgb(cr, 0.5, 0.5, 0.55);
+        cairo_set_source_rgb(cr, border_color[0], border_color[1], border_color[2]);
         cairo_set_line_width(cr, 1.0);
         cairo_rectangle(cr, item.x, item.y, item.w, item.h);
         cairo_stroke(cr);
 
         // Draw text
-        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        cairo_set_source_rgb(cr, text_color[0], text_color[1], text_color[2]);
         PangoLayout *layout = pango_cairo_create_layout(cr);
         pango_layout_set_font_description(layout, desc);
         pango_layout_set_text(layout, item.label.c_str(), -1);
