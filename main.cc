@@ -18,7 +18,7 @@ extern "C" {
 #include <string>
 #include <map>
 #include <functional>
-//#include "debug.cc"
+#include "config.h"
 
 #ifndef BTN_LEFT
 #define BTN_LEFT 0x110
@@ -65,6 +65,12 @@ class wl_state {
     int height;
     int current_frame = 0;
 
+    // For click-away background layer
+    struct wl_surface *bg_surface = nullptr;
+    struct zwlr_layer_surface_v1 *bg_layer_surface = nullptr;
+    struct wl_buffer *bg_buffer = nullptr;
+    struct wl_pointer *bg_pointer = nullptr;
+
     // HiDPI related
     std::map<uint32_t, wl_output_data> outputs_by_name;
     struct wl_output *chosen_output;
@@ -106,7 +112,6 @@ class MenuItem {
 };
 
 PangoFontDescription *desc;
-#include "config.h"
 
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
 static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
@@ -135,10 +140,6 @@ static const struct wl_output_listener output_listener = {
     .description = output_description,
 #endif
 };
-
-//=====================
-// Geometry helpers
-//=====================
 
 struct RenderedMenuGeometry {
     int width;
@@ -272,10 +273,6 @@ static RenderedMenuGeometry measure_menu_items(
     return geom;
 }
 
-//=====================
-// Pointer event helpers
-//=====================
-
 bool wl_state::handle_menu_click(MenuList& menu_list) {
     for (auto& item : menu_list) {
         if (item.is_separator) continue;
@@ -294,10 +291,6 @@ bool wl_state::handle_menu_click(MenuList& menu_list) {
     }
     return false;
 }
-
-//=====================
-// Pointer event listeners
-//=====================
 
 static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t sx, wl_fixed_t sy) {
     wl_state *state = static_cast<wl_state*>(data);
@@ -454,11 +447,48 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
     .closed = layer_surface_closed,
 };
 
-//=====================
-// Rendering helpers (use geometry)
-//=====================
+// transparent background layer implements close-on-click-away
+static void bg_layer_surface_configure(void *data,
+                                      struct zwlr_layer_surface_v1 *layer_surface,
+                                      uint32_t serial, uint32_t width, uint32_t height) {
+    zwlr_layer_surface_v1_ack_configure(layer_surface, serial);
+}
+static void bg_layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *) {
+    wl_state *state = static_cast<wl_state *>(data);
+    state->running = false;
+}
+static const struct zwlr_layer_surface_v1_listener bg_layer_surface_listener = {
+    .configure = bg_layer_surface_configure,
+    .closed = bg_layer_surface_closed,
+};
+static void bg_pointer_enter(void *data, struct wl_pointer *, uint32_t, struct wl_surface *, wl_fixed_t, wl_fixed_t) {}
+static void bg_pointer_leave(void *data, struct wl_pointer *, uint32_t, struct wl_surface *) {}
+static void bg_pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t, wl_fixed_t) {}
+static void bg_pointer_axis(void *data, struct wl_pointer *, uint32_t, uint32_t, wl_fixed_t) {}
+static void bg_pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, uint32_t, uint32_t state_wl) {
+    wl_state *state = static_cast<wl_state *>(data);
+    if (state_wl == WL_POINTER_BUTTON_STATE_PRESSED) {
+        state->running = false;
+    }
+}
+static void bg_pointer_frame(void *, struct wl_pointer *) {}
+static void bg_pointer_axis_source(void *, struct wl_pointer *, uint32_t) {}
+static void bg_pointer_axis_stop(void *, struct wl_pointer *, uint32_t, uint32_t) {}
+static void bg_pointer_axis_discrete(void *, struct wl_pointer *, uint32_t, int32_t) {}
+static const struct wl_pointer_listener bg_pointer_listener = {
+    .enter = bg_pointer_enter,
+    .leave = bg_pointer_leave,
+    .motion = bg_pointer_motion,
+    .button = bg_pointer_button,
+    .axis = bg_pointer_axis,
+    .frame = bg_pointer_frame,
+    .axis_source = bg_pointer_axis_source,
+    .axis_stop = bg_pointer_axis_stop,
+    .axis_discrete = bg_pointer_axis_discrete,
+    .axis_value120 = nullptr,
+    .axis_relative_direction = 0,
+};
 
-// Helper: recursively render menus/submenus along hovered_path
 static void render_menu_branch(
     cairo_t* cr,
     MenuList& menu_list,
@@ -568,6 +598,37 @@ static void render_menu_items(
     render_menu_branch(cr, state->menu, state, 0);
 }
 
+static struct wl_buffer *create_transparent_buffer(wl_state *state, int width, int height) {
+    int stride = width * 4;
+    int size = stride * height;
+
+    int fd = memfd_create("wayland-shm", 0);
+    if (fd < 0) {
+        return nullptr;
+    }
+    if (ftruncate(fd, size) < 0) {
+        close(fd);
+        return nullptr;
+    }
+    void *data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (data == MAP_FAILED) {
+        close(fd);
+        return nullptr;
+    }
+
+    memset(data, 0, size);
+
+    struct wl_shm_pool *pool = wl_shm_create_pool(state->shm, fd, size);
+    struct wl_buffer *buffer = wl_shm_pool_create_buffer(
+        pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+    wl_shm_pool_destroy(pool);
+
+    munmap(data, size);
+    close(fd);
+
+    return buffer;
+}
+
 static struct wl_buffer *create_buffer(wl_state *state) {
     int scale = state->chosen_scale;
 
@@ -665,10 +726,6 @@ static struct wl_buffer *create_buffer(wl_state *state) {
     return buffer;
 }
 
-//=====================
-// Menu parsing
-//=====================
-
 static void parse_menu(wl_state* state) {
     std::vector<MenuList*> stack;
     stack.push_back(&state->menu);
@@ -729,10 +786,6 @@ static void parse_menu(wl_state* state) {
     }
 }
 
-//=====================
-// Main
-//=====================
-
 int main() {
     wl_state state = {};
     state.running = true;
@@ -772,6 +825,36 @@ int main() {
         return 1;
     }
 
+    // Create background layer (transparent/full screen)
+    state.bg_surface = wl_compositor_create_surface(state.compositor);
+    state.bg_layer_surface = zwlr_layer_shell_v1_get_layer_surface(
+        state.layer_shell, state.bg_surface, nullptr,
+        ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "menu-bg");
+
+    zwlr_layer_surface_v1_set_anchor(state.bg_layer_surface,
+        ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+        ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+        ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
+        ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
+    zwlr_layer_surface_v1_set_keyboard_interactivity(state.bg_layer_surface, 0);
+    zwlr_layer_surface_v1_add_listener(state.bg_layer_surface, &bg_layer_surface_listener, &state);
+
+    wl_surface_commit(state.bg_surface);
+    wl_display_roundtrip(state.display);
+
+    // Use a reasonable default size for now; you may want to track this from configure
+    state.bg_buffer = create_transparent_buffer(&state, 1920, 1080);
+    if (!state.bg_buffer) {
+        fprintf(stderr, "Failed to create background buffer\n");
+        return 1;
+    }
+    wl_surface_attach(state.bg_surface, state.bg_buffer, 0, 0);
+    wl_surface_commit(state.bg_surface);
+
+    // Create a pointer for the background (click-away)
+    state.bg_pointer = wl_seat_get_pointer(state.seat);
+    wl_pointer_add_listener(state.bg_pointer, &bg_pointer_listener, &state);
+
     state.surface = wl_compositor_create_surface(state.compositor);
     wl_surface_set_buffer_scale(state.surface, state.chosen_scale);
 
@@ -805,6 +888,10 @@ int main() {
     }
 
     pango_font_description_free(desc);
+    if (state.bg_pointer) wl_pointer_destroy(state.bg_pointer);
+    if (state.bg_buffer) wl_buffer_destroy(state.bg_buffer);
+    if (state.bg_layer_surface) zwlr_layer_surface_v1_destroy(state.bg_layer_surface);
+    if (state.bg_surface) wl_surface_destroy(state.bg_surface);
     if (state.pointer) wl_pointer_destroy(state.pointer);
     if (state.seat) wl_seat_destroy(state.seat);
     if (state.buffer) wl_buffer_destroy(state.buffer);
@@ -818,6 +905,5 @@ int main() {
     }
     if (state.registry) wl_registry_destroy(state.registry);
     if (state.display) wl_display_disconnect(state.display);
-
     return 0;
 }
