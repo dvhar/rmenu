@@ -9,7 +9,9 @@ extern "C" {
 #include <unistd.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#define namespace namespace_
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
+#undef namespace
 }
 
 #include <vector>
