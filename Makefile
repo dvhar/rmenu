@@ -44,3 +44,6 @@ clean:
 	rm -f rmenu *.o wlr-layer-shell-unstable-v1-client-protocol.h wlr-layer-shell-unstable-v1-client-protocol.c xdg-shell-client-protocol.h xdg-shell-client-protocol.c
 
 .PHONY: all clean
+
+install: rmenu
+	install -Dm755 rmenu /usr/local/bin/rmenu
