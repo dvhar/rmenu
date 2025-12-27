@@ -564,7 +564,8 @@ static void render_menu_branch(
         // Draw arrow for submenu
         if (!item.submenu.empty()) {
             double arrow_size = text_height * 0.5;
-            double arrow_x = item.x + item.w - text_padding - arrow_size;
+            double arrow_margin = 4.0; // distance from right edge
+            double arrow_x = item.x + item.w - arrow_size - arrow_margin;
             double arrow_y = item.y + (item.h - arrow_size) / 2;
             cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
             cairo_move_to(cr, arrow_x, arrow_y);
@@ -871,7 +872,7 @@ int main() {
     wl_surface_commit(state.surface);
     wl_display_roundtrip(state.display);
 
-    desc = pango_font_description_from_string("Sans 12");
+    desc = pango_font_description_from_string(font);
 
     state.buffer = create_buffer(&state);
     if (!state.buffer) {
