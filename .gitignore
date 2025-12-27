@@ -1,7 +1,7 @@
 # Ignore build/cache output
 .cache/
 main.o
-hello-world
+rmenu
 
 # Ignore protocol generated files
 wlr-layer-shell-unstable-v1-client-protocol.c

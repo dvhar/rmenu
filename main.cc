@@ -100,9 +100,7 @@ class MenuItem {
     int last_rendered = 0;
     int x = 0, y = 0, w = 0, h = 0;
     bool is_separator = false;
-    int min_x() const { return x; }
     int max_x() const { return x+w; }
-    int min_y() const { return y; }
     int max_y() const { return y+h; }
     bool in_x(int px) const { return px >= x && px <= max_x(); }
     bool in_y(int py) const { return py >= y && py <= max_y(); }
@@ -146,11 +144,11 @@ struct RenderedMenuGeometry {
     int height;
 };
 
-std::tuple<int,int,int,int> submenu_geometry(const MenuList& submenu) {
+std::tuple<int,int,int,int> menu_geometry(const MenuList& submenu) {
   if (submenu.empty()) {
     return {0,0,0,0};
   }
-  return {submenu[0].min_x(), submenu[0].min_y(), submenu[submenu.size()-1].max_x(), submenu[submenu.size()-1].max_y()};
+  return {submenu[0].x, submenu[0].y, submenu[submenu.size()-1].max_x(), submenu[submenu.size()-1].max_y()};
 }
 
 std::vector<int> wl_state::find_submenu_path() {
@@ -161,7 +159,7 @@ std::vector<int> wl_state::find_submenu_path() {
         for (size_t i = 0; i < current->size(); ++i) {
             const auto& item = (*current)[i];
             if (!item.submenu.empty() && current_frame == item.submenu.last_rendered) {
-                auto [min_x, min_y, max_x, max_y] = submenu_geometry(item.submenu);
+                auto [min_x, min_y, max_x, max_y] = menu_geometry(item.submenu);
                 if (pointer_x >= min_x && pointer_x <= max_x && pointer_y >= min_y && pointer_y <= max_y) {
                     path.push_back(i);
                     current = &item.submenu;
@@ -500,12 +498,12 @@ static void render_menu_branch(
     auto& hovered_path = state->hovered_path;
 
     // Compute bounding rect for this menu
-    int min_x = menu_list[0].x, min_y = menu_list[0].y, max_x = menu_list[0].x + menu_list[0].w, max_y = menu_list[0].y + menu_list[0].h;
+    int min_x = menu_list[0].x, min_y = menu_list[0].y, max_x = menu_list[0].max_x(), max_y = menu_list[0].max_y();
     for (const auto& it : menu_list) {
-        if (it.x < min_x) min_x = it.x;
-        if (it.y < min_y) min_y = it.y;
-        if (it.x + it.w > max_x) max_x = it.x + it.w;
-        if (it.y + it.h > max_y) max_y = it.y + it.h;
+        min_x = std::min(min_x, it.x);
+        min_y = std::min(min_y, it.y);
+        max_x = std::max(max_x, it.max_x());
+        max_y = std::max(max_y, it.max_y());
     }
     int menu_width = max_x - min_x;
     int menu_height = max_y - min_y;
@@ -521,7 +519,7 @@ static void render_menu_branch(
         item.last_rendered = state->current_frame;
 
         if (item.is_separator) {
-             //Draw horizontal line in the center of the separator box
+            //Draw horizontal line in the center of the separator box
             double sep_y = item.y;
             cairo_set_source_rgb(cr, sep_color[0], sep_color[1], sep_color[2]);
             cairo_set_line_width(cr, separator_size);
@@ -665,15 +663,15 @@ static struct wl_buffer *create_buffer(wl_state *state) {
         const MenuList &submenu = item.submenu;
         if (!submenu.empty()) {
             int sub_min_x = submenu[0].x, sub_min_y = submenu[0].y;
-            int sub_max_x = submenu[0].x + submenu[0].w, sub_max_y = submenu[0].y + submenu[0].h;
+            int sub_max_x = submenu[0].max_x(), sub_max_y = submenu[0].max_y();
             for (const auto &it : submenu) {
-                if (it.x < sub_min_x) sub_min_x = it.x;
-                if (it.y < sub_min_y) sub_min_y = it.y;
-                if (it.x + it.w > sub_max_x) sub_max_x = it.x + it.w;
-                if (it.y + it.h > sub_max_y) sub_max_y = it.y + it.h;
+                sub_min_x = std::min(sub_min_x, it.x);
+                sub_min_y = std::min(sub_min_y, it.y);
+                sub_max_x = std::max(sub_max_x, it.max_x());
+                sub_max_y = std::max(sub_max_y, it.max_y());
             }
-            if (sub_max_x > max_x) max_x = sub_max_x;
-            if (sub_max_y > max_y) max_y = sub_max_y;
+            max_x = std::max(max_x, sub_max_x);
+            max_y = std::max(max_y, sub_max_y);
         }
 
         current = &item.submenu;
@@ -738,9 +736,7 @@ static void parse_menu(wl_state* state) {
             line[len - 1] = '\0';
         }
 
-        int tabs = 0;
-        while (line[tabs] == '\t') ++tabs;
-
+        int tabs = strspn(line, "\t");
         char* start = line + tabs;
 
         // Handle empty line: add a separator
@@ -749,12 +745,7 @@ static void parse_menu(wl_state* state) {
             MenuItem sep;
             sep.state = state;
             sep.is_separator = true;
-            sep.submenu = MenuList();
-            while ((int)stack.size() <= tabs)
-                stack.push_back(&stack.back()->items.back().submenu);
-            while ((int)stack.size() > tabs + 1)
-                stack.pop_back();
-            stack.back()->items.push_back(sep);
+            stack[0]->items.push_back(sep);
             continue;
         }
         if (tabs > 0 && prev_was_empty) {
@@ -774,7 +765,6 @@ static void parse_menu(wl_state* state) {
         } else {
             item.label = std::string(start);
         }
-        item.submenu = MenuList();
 
         while ((int)stack.size() <= tabs)
             stack.push_back(&stack.back()->items.back().submenu);
