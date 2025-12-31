@@ -533,13 +533,18 @@ static void render_menu_branch(
         bool is_hovered = (hovered_path.size() > level && hovered_path[level] == (int)i);
 
         // Button background color
-        if (is_hovered)
-            cairo_set_source_rgb(cr, hovered_color[0], hovered_color[1], hovered_color[2]);
-        else
-            cairo_set_source_rgb(cr, button_color[0], button_color[1], button_color[2]);
-
+         cairo_pattern_t *pat = cairo_pattern_create_linear(item.x, item.y, item.x + item.w, item.y);
+        if (is_hovered) {
+            cairo_pattern_add_color_stop_rgb(pat, 0.0, hovered_grad_left[0], hovered_grad_left[1], hovered_grad_left[2]);
+            cairo_pattern_add_color_stop_rgb(pat, 1.0, hovered_grad_right[0], hovered_grad_right[1], hovered_grad_right[2]);
+        } else {
+            cairo_pattern_add_color_stop_rgb(pat, 0.0, button_grad_left[0], button_grad_left[1], button_grad_left[2]);
+            cairo_pattern_add_color_stop_rgb(pat, 1.0, button_grad_right[0], button_grad_right[1], button_grad_right[2]);
+        }
         cairo_rectangle(cr, item.x, item.y, item.w, item.h);
+        cairo_set_source(cr, pat);
         cairo_fill(cr);
+        cairo_pattern_destroy(pat);
 
         // Draw button border
         cairo_set_source_rgb(cr, border_color[0], border_color[1], border_color[2]);
