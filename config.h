@@ -8,8 +8,8 @@ const int text_padding = 20;
 const int min_width = 100;
 const int separator_size = 1;
 
-const double button_grad_left[3]  = {0.32, 0.23, 0.20}; // dark blue-ish
-const double button_grad_right[3] = {0.48, 0.36, 0.32}; // lighter blue-ish
+const double button_grad_left[3]  = {0.22, 0.13, 0.10}; // dark blue-ish
+const double button_grad_right[3] = {0.32, 0.20, 0.18}; // lighter blue-ish
 const double hovered_grad_left[3]  = {0.43, 0.30, 0.26};
 const double hovered_grad_right[3] = {0.57, 0.43, 0.38};
 
