@@ -5,6 +5,7 @@ Item 1
 Item 2
 	Item 2.1
 		Item 2.1.a
+		#comment
 		Item 2.1.b	hidden output
 		Item 2.1.c	hidden output 2
 		Item 2.1.d	hidden output 3
@@ -22,5 +23,6 @@ Item 2
 Item 3
 	Item 3.1
 		Item 3.1.a
+#comment
 Item 4
 EOF

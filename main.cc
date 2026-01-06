@@ -744,6 +744,9 @@ static void parse_menu(wl_state* state) {
         int tabs = strspn(line, "\t");
         char* start = line + tabs;
 
+        if (*start == '#') {
+          continue;
+        }
         // Handle empty line: add a separator
         if (*start == '\0') {
             prev_was_empty = true;
