@@ -19,6 +19,9 @@ extern "C" {
 #include <map>
 #include <functional>
 #include "config.h"
+#include "incbin.h"
+
+INCBIN(wood, "wood3.png");
 
 #ifndef BTN_LEFT
 #define BTN_LEFT 0x110
@@ -110,6 +113,7 @@ class MenuItem {
 };
 
 PangoFontDescription *desc;
+cairo_surface_t *wood_texture = nullptr;
 
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
 static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
@@ -532,19 +536,37 @@ static void render_menu_branch(
         // Highlight hovered item at this level
         bool is_hovered = (hovered_path.size() > level && hovered_path[level] == (int)i);
 
-        // Button background color
-         cairo_pattern_t *pat = cairo_pattern_create_linear(item.x, item.y, item.x + item.w, item.y);
-        if (is_hovered) {
+        if (wood_texture) {
+          cairo_save(cr);
+          cairo_translate(cr, item.x, item.y);
+          double sx = (double)item.w / cairo_image_surface_get_width(wood_texture);
+          double sy = (double)item.h / cairo_image_surface_get_height(wood_texture);
+          cairo_scale(cr, sx, sy);
+          cairo_set_source_surface(cr, wood_texture, 0, 0);
+          cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(wood_texture), cairo_image_surface_get_height(wood_texture));
+          cairo_fill(cr);
+          if (is_hovered) {
+            // Overlay a translucent yellowish highlight
+            cairo_set_source_rgba(cr, 1.0, 1.0, 0.7, 0.25);
+            cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(wood_texture), cairo_image_surface_get_height(wood_texture));
+            cairo_fill(cr);
+          }
+          cairo_restore(cr);
+        } else {
+          // Button background color
+          cairo_pattern_t *pat = cairo_pattern_create_linear(item.x, item.y, item.x + item.w, item.y);
+          if (is_hovered) {
             cairo_pattern_add_color_stop_rgb(pat, 0.0, hovered_grad_left[0], hovered_grad_left[1], hovered_grad_left[2]);
             cairo_pattern_add_color_stop_rgb(pat, 1.0, hovered_grad_right[0], hovered_grad_right[1], hovered_grad_right[2]);
-        } else {
+          } else {
             cairo_pattern_add_color_stop_rgb(pat, 0.0, button_grad_left[0], button_grad_left[1], button_grad_left[2]);
             cairo_pattern_add_color_stop_rgb(pat, 1.0, button_grad_right[0], button_grad_right[1], button_grad_right[2]);
+          }
+          cairo_rectangle(cr, item.x, item.y, item.w, item.h);
+          cairo_set_source(cr, pat);
+          cairo_fill(cr);
+          cairo_pattern_destroy(pat);
         }
-        cairo_rectangle(cr, item.x, item.y, item.w, item.h);
-        cairo_set_source(cr, pat);
-        cairo_fill(cr);
-        cairo_pattern_destroy(pat);
 
         // Draw button border
         cairo_set_source_rgb(cr, border_color[0], border_color[1], border_color[2]);
@@ -785,6 +807,26 @@ static void parse_menu(wl_state* state) {
     }
 }
 
+struct mem_png {
+    const unsigned char *data;
+    unsigned int len;
+    unsigned int pos;
+};
+
+static cairo_status_t
+read_png_from_mem(void *closure, unsigned char *data, unsigned int length)
+{
+    // closure is a pointer to a struct holding the array and a read offset
+    struct mem_png *mem = (struct mem_png *)closure;
+
+    if (mem->pos + length > mem->len)
+        return CAIRO_STATUS_READ_ERROR;
+
+    memcpy(data, mem->data + mem->pos, length);
+    mem->pos += length;
+    return CAIRO_STATUS_SUCCESS;
+}
+
 int main() {
     wl_state state = {};
     state.running = true;
@@ -871,6 +913,16 @@ int main() {
     wl_display_roundtrip(state.display);
 
     desc = pango_font_description_from_string(font);
+    wood_texture = cairo_image_surface_create_from_png("wood1.png");
+    if (cairo_surface_status(wood_texture) != CAIRO_STATUS_SUCCESS) {
+      fprintf(stderr, "Failed to load wood texture\n");
+      wood_texture = nullptr;
+    }
+    mem_png mem = { gwoodData, gwoodSize, 0 };
+    wood_texture = cairo_image_surface_create_from_png_stream(read_png_from_mem, &mem);
+    if (cairo_surface_status(wood_texture) != CAIRO_STATUS_SUCCESS) {
+      fprintf(stderr, "Failed to load embedded wood texture\n");
+    }
 
     state.buffer = create_buffer(&state);
     if (!state.buffer) {
