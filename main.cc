@@ -1,147 +1,13 @@
-extern "C" {
-#include <wayland-client.h>
-#include <cairo/cairo.h>
-#include <pango/pangocairo.h>
-#include <glib-object.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/mman.h>
-#include <fcntl.h>
-#define namespace namespace_
-#include "wlr-layer-shell-unstable-v1-client-protocol.h"
-#undef namespace
-}
-
-#include <vector>
-#include <string>
-#include <map>
-#include <functional>
-#include "config.h"
-#include "incbin.h"
+#include "rmenu.h"
 
 INCBIN(wood, "wood3.png");
 
-#ifndef BTN_LEFT
-#define BTN_LEFT 0x110
-#endif
-
 class wl_state;
 
-struct MenuList {
-    std::vector<class MenuItem> items;
-    int last_rendered = 0;
-
-    MenuItem& operator[](size_t i) { return items[i]; }
-    const MenuItem& operator[](size_t i) const { return items[i]; }
-    size_t size() const { return items.size(); }
-    bool empty() const { return items.empty(); }
-    auto begin() { return items.begin(); }
-    auto end() { return items.end(); }
-    auto begin() const { return items.begin(); }
-    auto end() const { return items.end(); }
-    auto cbegin() const { return items.cbegin(); }
-    auto cend() const { return items.cend(); }
-};
-
-struct wl_output_data {
-    struct wl_output *output;
-    int32_t scale;
-    uint32_t name;
-};
-
-class wl_state {
-  public:
-    struct wl_display *display;
-    struct wl_registry *registry;
-    struct wl_compositor *compositor;
-    struct wl_shm *shm;
-    struct zwlr_layer_shell_v1 *layer_shell;
-    struct wl_surface *surface;
-    struct zwlr_layer_surface_v1 *layer_surface;
-    struct wl_buffer *buffer;
-
-    MenuList menu;
-    bool running;
-    int width;
-    int height;
-    int current_frame = 0;
-
-    // For click-away background layer
-    struct wl_surface *bg_surface = nullptr;
-    struct zwlr_layer_surface_v1 *bg_layer_surface = nullptr;
-    struct wl_buffer *bg_buffer = nullptr;
-    struct wl_pointer *bg_pointer = nullptr;
-
-    // HiDPI related
-    std::map<uint32_t, wl_output_data> outputs_by_name;
-    struct wl_output *chosen_output;
-    int chosen_scale;
-
-    // Pointer/seat
-    struct wl_seat *seat = nullptr;
-    struct wl_pointer *pointer = nullptr;
-    int pointer_x = 0; // in logical coords
-    int pointer_y = 0; // in logical coords
-    bool pointer_inside = false;
-
-    // Hover handling
-    std::vector<int> hovered_path;
-
-    std::vector<int> find_hovered_path();
-    std::vector<int> find_submenu_path();
-    bool handle_menu_click(MenuList& menu_list);
-};
-
-class MenuItem {
-  public:
-    std::string label;
-    std::string output;
-    MenuList submenu;
-    wl_state* state;
-    int last_rendered = 0;
-    int x = 0, y = 0, w = 0, h = 0;
-    bool is_separator = false;
-    int max_x() const { return x+w; }
-    int max_y() const { return y+h; }
-    bool in_x(int px) const { return px >= x && px <= max_x(); }
-    bool in_y(int py) const { return py >= y && py <= max_y(); }
-    bool in_box() const { return !is_separator &&
-      last_rendered == state->current_frame &&
-      in_x(state->pointer_x) && in_y(state->pointer_y); }
-};
 
 PangoFontDescription *desc;
 cairo_surface_t *wood_texture = nullptr;
 
-static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
-static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
-static void output_done(void*, struct wl_output*) {}
-static void output_name(void*, struct wl_output*, const char*) {}
-static void output_description(void*, struct wl_output*, const char*) {}
-
-static struct wl_buffer *create_buffer(wl_state *state);
-
-static void output_scale(void *data, struct wl_output *output, int32_t factor) {
-    wl_state* state = (wl_state*)data;
-    for (auto& pair : state->outputs_by_name) {
-        if (pair.second.output == output) {
-            pair.second.scale = factor;
-        }
-    }
-}
-
-static const struct wl_output_listener output_listener = {
-    .geometry = output_geometry,
-    .mode = output_mode,
-    .done = output_done,
-    .scale = output_scale,
-#if WL_OUTPUT_NAME_SINCE_VERSION
-    .name = output_name,
-    .description = output_description,
-#endif
-};
 
 struct RenderedMenuGeometry {
     int width;
@@ -294,202 +160,6 @@ bool wl_state::handle_menu_click(MenuList& menu_list) {
     return false;
 }
 
-static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t sx, wl_fixed_t sy) {
-    wl_state *state = static_cast<wl_state*>(data);
-    state->pointer_x = wl_fixed_to_double(sx);
-    state->pointer_y = wl_fixed_to_double(sy);
-
-    auto new_hovered_path = state->find_hovered_path();
-    if (state->hovered_path != new_hovered_path && new_hovered_path.size()) {
-        state->hovered_path = std::move(new_hovered_path);
-        if (state->buffer) wl_buffer_destroy(state->buffer);
-        state->buffer = create_buffer(state);
-        wl_surface_attach(state->surface, state->buffer, 0, 0);
-        wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
-        wl_surface_commit(state->surface);
-    }
-}
-
-static void pointer_enter(void *data, struct wl_pointer *, uint32_t, struct wl_surface *, wl_fixed_t sx, wl_fixed_t sy) {
-    wl_state *state = static_cast<wl_state*>(data);
-    state->pointer_inside = true;
-    state->pointer_x = wl_fixed_to_double(sx);
-    state->pointer_y = wl_fixed_to_double(sy);
-
-    auto new_hovered_path = state->find_hovered_path();
-    if (state->hovered_path != new_hovered_path) {
-        state->hovered_path = std::move(new_hovered_path);
-        if (state->buffer) wl_buffer_destroy(state->buffer);
-        state->buffer = create_buffer(state);
-        wl_surface_attach(state->surface, state->buffer, 0, 0);
-        wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
-        wl_surface_commit(state->surface);
-    }
-}
-
-static void pointer_leave(void *data, struct wl_pointer *, uint32_t, struct wl_surface *) {
-    wl_state *state = static_cast<wl_state*>(data);
-    state->pointer_inside = false;
-    if (!state->hovered_path.empty()) {
-        state->hovered_path.clear();
-        if (state->buffer) wl_buffer_destroy(state->buffer);
-        state->buffer = create_buffer(state);
-        wl_surface_attach(state->surface, state->buffer, 0, 0);
-        wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
-        wl_surface_commit(state->surface);
-    }
-}
-
-static void pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, uint32_t button, uint32_t state_wl) {
-    wl_state *state = static_cast<wl_state*>(data);
-    if (button == BTN_LEFT && state_wl == WL_POINTER_BUTTON_STATE_PRESSED) {
-        state->handle_menu_click(state->menu);
-    }
-}
-
-static void pointer_axis(void *, struct wl_pointer *, uint32_t, uint32_t, wl_fixed_t) {}
-static void pointer_frame(void *, struct wl_pointer *) {}
-static void pointer_axis_source(void *, struct wl_pointer *, uint32_t) {}
-static void pointer_axis_stop(void *, struct wl_pointer *, uint32_t, uint32_t) {}
-static void pointer_axis_discrete(void *, struct wl_pointer *, uint32_t, int32_t) {}
-
-static const struct wl_pointer_listener pointer_listener = {
-    .enter = pointer_enter,
-    .leave = pointer_leave,
-    .motion = pointer_motion,
-    .button = pointer_button,
-    .axis = pointer_axis,
-    .frame = pointer_frame,
-    .axis_source = pointer_axis_source,
-    .axis_stop = pointer_axis_stop,
-    .axis_discrete = pointer_axis_discrete,
-    .axis_value120 = nullptr,
-    .axis_relative_direction = 0
-};
-
-static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
-    wl_state *state = static_cast<wl_state*>(data);
-    if (caps & WL_SEAT_CAPABILITY_POINTER) {
-        if (!state->pointer) {
-            state->pointer = wl_seat_get_pointer(seat);
-            wl_pointer_add_listener(state->pointer, &pointer_listener, state);
-        }
-    } else {
-        if (state->pointer) {
-            wl_pointer_destroy(state->pointer);
-            state->pointer = nullptr;
-        }
-    }
-}
-static void seat_name(void *, struct wl_seat *, const char *) {}
-
-static const struct wl_seat_listener seat_listener = {
-    .capabilities = seat_capabilities,
-#if WL_SEAT_NAME_SINCE_VERSION
-    .name = seat_name,
-#endif
-};
-
-static void registry_global(void *data, struct wl_registry *registry,
-                           uint32_t name, const char *interface, uint32_t version) {
-    wl_state *state = static_cast<wl_state *>(data);
-
-    if (strcmp(interface, wl_compositor_interface.name) == 0) {
-        state->compositor = static_cast<struct wl_compositor *>(wl_registry_bind(
-            registry, name, &wl_compositor_interface, 4));
-    } else if (strcmp(interface, wl_shm_interface.name) == 0) {
-        state->shm = static_cast<struct wl_shm *>(wl_registry_bind(
-            registry, name, &wl_shm_interface, 1));
-    } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
-        state->layer_shell = static_cast<struct zwlr_layer_shell_v1 *>(wl_registry_bind(
-            registry, name, &zwlr_layer_shell_v1_interface, 1));
-    } else if (strcmp(interface, wl_output_interface.name) == 0) {
-        struct wl_output *output = static_cast<struct wl_output*>(wl_registry_bind(
-            registry, name, &wl_output_interface, (version >= 2) ? 2 : 1));
-        wl_output_data od;
-        od.output = output;
-        od.scale = 1;
-        od.name = name;
-        wl_output_add_listener(output, &output_listener, state);
-        state->outputs_by_name[name] = od;
-    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
-        state->seat = static_cast<struct wl_seat*>(wl_registry_bind(
-            registry, name, &wl_seat_interface, 5));
-        wl_seat_add_listener(state->seat, &seat_listener, state);
-    }
-}
-
-static void registry_global_remove(void *data, struct wl_registry *, uint32_t name) {
-    wl_state *state = static_cast<wl_state *>(data);
-    auto it = state->outputs_by_name.find(name);
-    if (it != state->outputs_by_name.end()) {
-        wl_output_destroy(it->second.output);
-        state->outputs_by_name.erase(it);
-    }
-}
-
-static const struct wl_registry_listener registry_listener = {
-    .global = registry_global,
-    .global_remove = registry_global_remove,
-};
-
-static void layer_surface_configure(void *, struct zwlr_layer_surface_v1 *layer_surface,
-                                   uint32_t serial, uint32_t, uint32_t) {
-    zwlr_layer_surface_v1_ack_configure(layer_surface, serial);
-}
-
-static void layer_surface_closed(void *data,
-                                struct zwlr_layer_surface_v1 *) {
-    wl_state *state = static_cast<wl_state *>(data);
-    state->running = false;
-}
-
-static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
-    .configure = layer_surface_configure,
-    .closed = layer_surface_closed,
-};
-
-// transparent background layer implements close-on-click-away
-static void bg_layer_surface_configure(void *data,
-                                      struct zwlr_layer_surface_v1 *layer_surface,
-                                      uint32_t serial, uint32_t width, uint32_t height) {
-    zwlr_layer_surface_v1_ack_configure(layer_surface, serial);
-}
-static void bg_layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *) {
-    wl_state *state = static_cast<wl_state *>(data);
-    state->running = false;
-}
-static const struct zwlr_layer_surface_v1_listener bg_layer_surface_listener = {
-    .configure = bg_layer_surface_configure,
-    .closed = bg_layer_surface_closed,
-};
-static void bg_pointer_enter(void *data, struct wl_pointer *, uint32_t, struct wl_surface *, wl_fixed_t, wl_fixed_t) {}
-static void bg_pointer_leave(void *data, struct wl_pointer *, uint32_t, struct wl_surface *) {}
-static void bg_pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t, wl_fixed_t) {}
-static void bg_pointer_axis(void *data, struct wl_pointer *, uint32_t, uint32_t, wl_fixed_t) {}
-static void bg_pointer_button(void *data, struct wl_pointer *, uint32_t, uint32_t, uint32_t, uint32_t state_wl) {
-    wl_state *state = static_cast<wl_state *>(data);
-    if (state_wl == WL_POINTER_BUTTON_STATE_PRESSED) {
-        state->running = false;
-    }
-}
-static void bg_pointer_frame(void *, struct wl_pointer *) {}
-static void bg_pointer_axis_source(void *, struct wl_pointer *, uint32_t) {}
-static void bg_pointer_axis_stop(void *, struct wl_pointer *, uint32_t, uint32_t) {}
-static void bg_pointer_axis_discrete(void *, struct wl_pointer *, uint32_t, int32_t) {}
-static const struct wl_pointer_listener bg_pointer_listener = {
-    .enter = bg_pointer_enter,
-    .leave = bg_pointer_leave,
-    .motion = bg_pointer_motion,
-    .button = bg_pointer_button,
-    .axis = bg_pointer_axis,
-    .frame = bg_pointer_frame,
-    .axis_source = bg_pointer_axis_source,
-    .axis_stop = bg_pointer_axis_stop,
-    .axis_discrete = bg_pointer_axis_discrete,
-    .axis_value120 = nullptr,
-    .axis_relative_direction = 0,
-};
 
 static void render_menu_branch(
     cairo_t* cr,
@@ -655,7 +325,7 @@ static struct wl_buffer *create_transparent_buffer(wl_state *state, int width, i
     return buffer;
 }
 
-static struct wl_buffer *create_buffer(wl_state *state) {
+struct wl_buffer *create_buffer(wl_state *state) {
     int scale = state->chosen_scale;
 
     cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
@@ -827,7 +497,7 @@ read_png_from_mem(void *closure, unsigned char *data, unsigned int length)
     return CAIRO_STATUS_SUCCESS;
 }
 
-int main() {
+int main(int argc, char** argv) {
     wl_state state = {};
     state.running = true;
     state.width = min_width;

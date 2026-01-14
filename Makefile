@@ -35,9 +35,13 @@ wlr-layer-shell-unstable-v1-client-protocol.o: wlr-layer-shell-unstable-v1-clien
 # Compile main
 main.o: main.cc wlr-layer-shell-unstable-v1-client-protocol.h xdg-shell-client-protocol.h config.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c main.cc -o $@
+	#
+# Compile other
+wayland.o: wayland.cc wlr-layer-shell-unstable-v1-client-protocol.h xdg-shell-client-protocol.h config.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c wayland.cc -o $@
 
 # Link
-rmenu: main.o wlr-layer-shell-unstable-v1-client-protocol.o xdg-shell-client-protocol.o
+rmenu: main.o wayland.o wlr-layer-shell-unstable-v1-client-protocol.o xdg-shell-client-protocol.o
 	$(CXX) $(CXXFLAGS) $^ $(LIBS) -o $@
 
 clean:
