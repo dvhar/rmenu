@@ -445,7 +445,7 @@ static void parse_menu(wl_state* state) {
             MenuItem sep;
             sep.state = state;
             sep.is_separator = true;
-            stack[0]->items.push_back(sep);
+            stack[0]->items.push_back(std::move(sep));
             continue;
         }
         if (tabs > 0 && prev_was_empty) {
@@ -472,7 +472,7 @@ static void parse_menu(wl_state* state) {
         while ((int)stack.size() > tabs + 1)
             stack.pop_back();
 
-        stack.back()->items.push_back(item);
+        stack.back()->items.push_back(std::move(item));
         prev_was_empty = false;
     }
 }
