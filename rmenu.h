@@ -29,6 +29,8 @@ extern "C" {
 struct MenuList {
     std::vector<class MenuItem> items;
     int last_rendered = 0;
+    bool has_icons = false;
+    int text_left_padding = text_padding;
 
     MenuItem& operator[](size_t i) { return items[i]; }
     const MenuItem& operator[](size_t i) const { return items[i]; }
@@ -95,8 +97,12 @@ class MenuItem {
   public:
     std::string label;
     std::string output;
+    std::string file;
+    cairo_surface_t* icon_surface = nullptr;
     MenuList submenu;
     wl_state* state;
+    int icon_width;
+    int icon_height;
     int last_rendered = 0;
     int x = 0, y = 0, w = 0, h = 0;
     bool is_separator = false;

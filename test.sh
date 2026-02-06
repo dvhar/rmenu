@@ -25,4 +25,5 @@ Item 3
 		Item 3.1.a
 #comment
 Item 4
+IMG:./icons/web.png	Item 5
 EOF

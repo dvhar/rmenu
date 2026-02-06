@@ -20,3 +20,7 @@ static const float border_color[] = COLOR(0x505055); // #505055
 
 
 static const char* const font  = "Sans 12";
+
+static const int icon_size       = button_height;
+static const int icon_text_gap   = 8;
+static const int icon_left_pad   = text_padding;

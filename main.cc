@@ -71,44 +71,58 @@ std::vector<int> wl_state::find_hovered_path() {
     return path;
 }
 
-// Recursive geometry assignment
+
 static RenderedMenuGeometry measure_menu_items(
     MenuList& menu_list,
     cairo_t* cr,
     int base_x = 0,
     int base_y = 0
 ) {
+    menu_list.has_icons = false;
     int max_text_width = 0;
-    std::vector<std::pair<int, int>> text_sizes;
 
-    for (auto& item : menu_list) {
-        if (item.is_separator) {
-            text_sizes.push_back({0, 0});
-            continue;
-        }
+    // First pass: check if any item has an icon & measure text widths
+    for (const auto& item : menu_list) {
+        if (item.is_separator) continue;
+
         PangoLayout *layout = pango_cairo_create_layout(cr);
         pango_layout_set_font_description(layout, desc);
         pango_layout_set_text(layout, item.label.c_str(), -1);
 
         int text_width, text_height;
         pango_layout_get_pixel_size(layout, &text_width, &text_height);
-        text_sizes.push_back({text_width, text_height});
         g_object_unref(layout);
 
-        int total_width = text_width + 2 * text_padding;
-        if (!item.submenu.empty()) total_width += 20; // space for arrow
-        if (total_width > max_text_width) max_text_width = total_width;
+        int item_content_width = text_width + 2 * text_padding;
+
+        if (item.icon_surface) {
+            menu_list.has_icons = true;
+            item_content_width += icon_size + icon_text_gap;
+        }
+
+        if (!item.submenu.empty()) {
+            item_content_width += 20; // arrow
+        }
+
+        if (item_content_width > max_text_width) {
+            max_text_width = item_content_width;
+        }
     }
 
-    int logical_width = max_text_width;
-    if (logical_width < min_width) logical_width = min_width;
+    int logical_width = std::max(max_text_width, min_width);
 
-    // Compute the y position for each item, accounting for separators
+    // If this menu has any icons → increase left padding for ALL items
+    menu_list.text_left_padding = text_padding;
+    if (menu_list.has_icons) {
+        menu_list.text_left_padding = icon_size + icon_text_gap;
+    }
+
+    // Second pass: assign geometry
     int y = base_y;
-    for (size_t i = 0; i < menu_list.size(); ++i) {
-        auto& item = menu_list[i];
+    for (auto& item : menu_list) {
         item.x = base_x;
         item.y = y;
+
         if (item.is_separator) {
             item.w = logical_width;
             item.h = separator_size;
@@ -116,29 +130,26 @@ static RenderedMenuGeometry measure_menu_items(
             item.w = logical_width;
             item.h = button_height;
         }
+
         y += item.h + button_spacing;
     }
 
     int logical_height = y - base_y - button_spacing;
 
-    // Recursively assign for submenus
-    for (size_t i = 0; i < menu_list.size(); ++i) {
-        if (!menu_list[i].submenu.empty()) {
+    // Recurse into submenus
+    for (auto& item : menu_list) {
+        if (!item.submenu.empty()) {
             cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
             cairo_t *temp_cr = cairo_create(temp_surface);
-            measure_menu_items(
-                menu_list[i].submenu,
-                temp_cr,
-                base_x + logical_width, // right of this menu
-                menu_list[i].y // vertical position aligned with item
-            );
+            measure_menu_items(item.submenu, temp_cr,
+                               base_x + logical_width,  // right of current menu
+                               item.y);                 // aligned with item
             cairo_destroy(temp_cr);
             cairo_surface_destroy(temp_surface);
         }
     }
 
-    RenderedMenuGeometry geom = { logical_width, logical_height };
-    return geom;
+    return {logical_width, logical_height};
 }
 
 bool wl_state::handle_menu_click(MenuList& menu_list) {
@@ -193,12 +204,12 @@ static void render_menu_branch(
         item.last_rendered = state->current_frame;
 
         if (item.is_separator) {
-            //Draw horizontal line in the center of the separator box
-            double sep_y = item.y;
+            // Draw horizontal line in the center of the separator box
+            double sep_y = item.y + separator_size / 2.0;
             cairo_set_source_rgb(cr, sep_color[0], sep_color[1], sep_color[2]);
             cairo_set_line_width(cr, separator_size);
-            cairo_move_to(cr, item.x + 5, sep_y + separator_size/2.0);
-            cairo_line_to(cr, item.x + item.w - 5, sep_y + separator_size/2.0);
+            cairo_move_to(cr, item.x + 5, sep_y);
+            cairo_line_to(cr, item.x + item.w - 5, sep_y);
             cairo_stroke(cr);
             continue;
         }
@@ -206,36 +217,38 @@ static void render_menu_branch(
         // Highlight hovered item at this level
         bool is_hovered = (hovered_path.size() > level && hovered_path[level] == (int)i);
 
+        // === Draw item background ===
         if (wood_texture) {
-          cairo_save(cr);
-          cairo_translate(cr, item.x, item.y);
-          double sx = (double)item.w / cairo_image_surface_get_width(wood_texture);
-          double sy = (double)item.h / cairo_image_surface_get_height(wood_texture);
-          cairo_scale(cr, sx, sy);
-          cairo_set_source_surface(cr, wood_texture, 0, 0);
-          cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(wood_texture), cairo_image_surface_get_height(wood_texture));
-          cairo_fill(cr);
-          if (is_hovered) {
-            // Overlay a translucent yellowish highlight
-            cairo_set_source_rgba(cr, 1.0, 1.0, 0.7, 0.25);
+            cairo_save(cr);
+            cairo_translate(cr, item.x, item.y);
+            double sx = (double)item.w / cairo_image_surface_get_width(wood_texture);
+            double sy = (double)item.h / cairo_image_surface_get_height(wood_texture);
+            cairo_scale(cr, sx, sy);
+            cairo_set_source_surface(cr, wood_texture, 0, 0);
             cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(wood_texture), cairo_image_surface_get_height(wood_texture));
             cairo_fill(cr);
-          }
-          cairo_restore(cr);
+
+            if (is_hovered) {
+                // Overlay translucent yellowish highlight on hover
+                cairo_set_source_rgba(cr, 1.0, 1.0, 0.7, 0.25);
+                cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(wood_texture), cairo_image_surface_get_height(wood_texture));
+                cairo_fill(cr);
+            }
+            cairo_restore(cr);
         } else {
-          // Button background color
-          cairo_pattern_t *pat = cairo_pattern_create_linear(item.x, item.y, item.x + item.w, item.y);
-          if (is_hovered) {
-            cairo_pattern_add_color_stop_rgb(pat, 0.0, hovered_grad_left[0], hovered_grad_left[1], hovered_grad_left[2]);
-            cairo_pattern_add_color_stop_rgb(pat, 1.0, hovered_grad_right[0], hovered_grad_right[1], hovered_grad_right[2]);
-          } else {
-            cairo_pattern_add_color_stop_rgb(pat, 0.0, button_grad_left[0], button_grad_left[1], button_grad_left[2]);
-            cairo_pattern_add_color_stop_rgb(pat, 1.0, button_grad_right[0], button_grad_right[1], button_grad_right[2]);
-          }
-          cairo_rectangle(cr, item.x, item.y, item.w, item.h);
-          cairo_set_source(cr, pat);
-          cairo_fill(cr);
-          cairo_pattern_destroy(pat);
+            // Fallback gradient background
+            cairo_pattern_t *pat = cairo_pattern_create_linear(item.x, item.y, item.x + item.w, item.y);
+            if (is_hovered) {
+                cairo_pattern_add_color_stop_rgb(pat, 0.0, hovered_grad_left[0], hovered_grad_left[1], hovered_grad_left[2]);
+                cairo_pattern_add_color_stop_rgb(pat, 1.0, hovered_grad_right[0], hovered_grad_right[1], hovered_grad_right[2]);
+            } else {
+                cairo_pattern_add_color_stop_rgb(pat, 0.0, button_grad_left[0], button_grad_left[1], button_grad_left[2]);
+                cairo_pattern_add_color_stop_rgb(pat, 1.0, button_grad_right[0], button_grad_right[1], button_grad_right[2]);
+            }
+            cairo_rectangle(cr, item.x, item.y, item.w, item.h);
+            cairo_set_source(cr, pat);
+            cairo_fill(cr);
+            cairo_pattern_destroy(pat);
         }
 
         // Draw button border
@@ -244,7 +257,25 @@ static void render_menu_branch(
         cairo_rectangle(cr, item.x, item.y, item.w, item.h);
         cairo_stroke(cr);
 
-        // Draw text
+        // === Draw icon (if present) ===
+        if (item.icon_surface && item.icon_surface != nullptr) {
+            double icon_y = item.y + (item.h - icon_size) / 2.0;
+
+            cairo_save(cr);
+            // Start icon at the very left edge of the item (no text_padding!)
+            cairo_translate(cr, item.x, icon_y);
+
+            // Scale to ICON_SIZE
+            double sx = (double)icon_size / item.icon_width;
+            double sy = (double)icon_size / item.icon_height;
+            cairo_scale(cr, sx, sy);
+
+            cairo_set_source_surface(cr, item.icon_surface, 0, 0);
+            cairo_paint(cr);
+            cairo_restore(cr);
+        }
+
+        // === Draw text ===
         cairo_set_source_rgb(cr, text_color[0], text_color[1], text_color[2]);
         PangoLayout *layout = pango_cairo_create_layout(cr);
         pango_layout_set_font_description(layout, desc);
@@ -253,15 +284,19 @@ static void render_menu_branch(
         int text_width, text_height;
         pango_layout_get_pixel_size(layout, &text_width, &text_height);
 
-        cairo_move_to(cr, item.x + text_padding, item.y + (item.h - text_height) / 2);
+        cairo_move_to(cr,
+                      item.x + menu_list.text_left_padding,
+                      item.y + (item.h - text_height) / 2.0);
+
         pango_cairo_show_layout(cr, layout);
 
-        // Draw arrow for submenu
+        // === Draw arrow for submenu (if present) ===
         if (!item.submenu.empty()) {
             double arrow_size = text_height * 0.5;
-            double arrow_margin = 4.0; // distance from right edge
+            double arrow_margin = 4.0;
             double arrow_x = item.x + item.w - arrow_size - arrow_margin;
             double arrow_y = item.y + (item.h - arrow_size) / 2;
+
             cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
             cairo_move_to(cr, arrow_x, arrow_y);
             cairo_line_to(cr, arrow_x + arrow_size, arrow_y + arrow_size / 2);
@@ -426,7 +461,7 @@ static void parse_menu(wl_state* state) {
     std::vector<MenuList*> stack;
     stack.push_back(&state->menu);
     bool prev_was_empty = false;
-    char line[256];
+    char line[1024];
     while (fgets(line, sizeof(line), stdin)) {
         size_t len = strlen(line);
         if (len > 0 && line[len - 1] == '\n') {
@@ -456,9 +491,30 @@ static void parse_menu(wl_state* state) {
         MenuItem item;
         item.state = state;
 
+        if (strncmp(start, "IMG:", 4) == 0) {
+            start += 4;
+            char* tab = strchr(start, '\t');
+            if (!tab) {
+                fprintf(stderr, "Missing tab after icon\n");
+                exit(1);
+            }
+            item.file = std::string(start, tab - start);
+            start = tab+1;
+
+            cairo_surface_t* icon_surf = cairo_image_surface_create_from_png(item.file.c_str());
+            if (cairo_surface_status(icon_surf) != CAIRO_STATUS_SUCCESS) {
+                fprintf(stderr, "Failed to load icon: %s\n", item.file.c_str());
+                cairo_surface_destroy(icon_surf);
+                icon_surf = nullptr;
+            } else {
+                item.icon_surface = icon_surf;
+                item.icon_width  = cairo_image_surface_get_width(icon_surf);
+                item.icon_height = cairo_image_surface_get_height(icon_surf);
+            }
+        }
+
         char* midtab = strchr(start, '\t');
         if (midtab) {
-            // Split into label and output
             *midtab = '\0';
             item.label = std::string(start);
             item.output = std::string(midtab + 1);
@@ -495,6 +551,18 @@ read_png_from_mem(void *closure, unsigned char *data, unsigned int length)
     memcpy(data, mem->data + mem->pos, length);
     mem->pos += length;
     return CAIRO_STATUS_SUCCESS;
+}
+
+static void destroy_menu_icons(MenuList& menu_list) {
+    for (auto& item : menu_list) {
+        if (item.icon_surface) {
+            cairo_surface_destroy(item.icon_surface);
+            item.icon_surface = nullptr;
+        }
+        if (!item.submenu.empty()) {
+            destroy_menu_icons(item.submenu);
+        }
+    }
 }
 
 int main(int argc, char** argv) {
@@ -609,6 +677,7 @@ int main(int argc, char** argv) {
     }
 
     pango_font_description_free(desc);
+    destroy_menu_icons(state.menu);
     if (state.bg_pointer) wl_pointer_destroy(state.bg_pointer);
     if (state.bg_buffer) wl_buffer_destroy(state.bg_buffer);
     if (state.bg_layer_surface) zwlr_layer_surface_v1_destroy(state.bg_layer_surface);
