@@ -1,13 +1,36 @@
 #include "rmenu.h"
 
-INCBIN(wood, "wood3.png");
 #define RGB(arr) arr[0], arr[1], arr[2]
+
+#ifdef multi_background
+INCBIN(simple, "textures/" img_simple);
+INCBIN(frame_top, "textures/" img_top);
+INCBIN(frame_mid, "textures/" img_mid);
+INCBIN(frame_bot, "textures/" img_bot);
+#elif single_background
+INCBIN(simple, "textures/" img_simple);
+#endif
+#if !defined(multi_background) && !defined(single_background)
+const unsigned char gsimpleData[0] = {};
+const unsigned int gsimpleSize = 0;
+#endif
+#ifndef multi_background
+const unsigned char gframe_topData[] = {};
+const unsigned int gframe_topSize = 0;
+const unsigned char gframe_midData[] = {};
+const unsigned int gframe_midSize = 0;
+const unsigned char gframe_botData[] = {};
+const unsigned int gframe_botSize = 0;
+#endif
 
 class wl_state;
 
 
 PangoFontDescription *desc;
-cairo_surface_t *wood_texture = nullptr;
+static cairo_surface_t *top_texture = nullptr;
+static cairo_surface_t *mid_texture = nullptr;
+static cairo_surface_t *bot_texture = nullptr;
+static cairo_surface_t *lone_texture = nullptr;
 
 
 struct RenderedMenuGeometry {
@@ -199,6 +222,12 @@ static void render_menu_branch(
     cairo_rectangle(cr, min_x, min_y, menu_width, menu_height);
     cairo_fill(cr);
 
+    // Count non-separator items (to pick top/mid/bot backgrounds)
+    int nonsep_count = 0;
+    for (const auto& it : menu_list) {
+        if (!it.is_separator) ++nonsep_count;
+    }
+
     // Draw all menu items
     for (size_t i = 0; i < menu_list.size(); ++i) {
         auto& item = menu_list[i];
@@ -219,25 +248,46 @@ static void render_menu_branch(
         bool is_hovered = (hovered_path.size() > level && hovered_path[level] == (int)i);
 
         // === Draw item background ===
-        if (wood_texture) {
+        // Determine this item's index among non-separator items
+        int nonsep_index = -1;
+        if (!item.is_separator) {
+            int current = 0;
+            for (size_t j = 0; j < i; ++j)
+                if (!menu_list[j].is_separator) ++current;
+            nonsep_index = current;
+        }
+
+        // Choose background image
+        cairo_surface_t *bg = nullptr;
+        if (nonsep_count == 1 && !item.is_separator) {
+            bg = lone_texture;
+        } else if (nonsep_index == 0) {
+            bg = top_texture ? top_texture : lone_texture;
+        } else if (nonsep_index == nonsep_count - 1) {
+            bg = bot_texture ? bot_texture : lone_texture;
+        } else if (nonsep_index > 0) {
+            bg = mid_texture ? mid_texture : lone_texture;
+        }
+
+        if (!item.is_separator && bg) {
             cairo_save(cr);
             cairo_translate(cr, item.x, item.y);
-            double sx = (double)item.w / cairo_image_surface_get_width(wood_texture);
-            double sy = (double)item.h / cairo_image_surface_get_height(wood_texture);
+            double sx = (double)item.w / cairo_image_surface_get_width(bg);
+            double sy = (double)item.h / cairo_image_surface_get_height(bg);
             cairo_scale(cr, sx, sy);
-            cairo_set_source_surface(cr, wood_texture, 0, 0);
-            cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(wood_texture), cairo_image_surface_get_height(wood_texture));
+            cairo_set_source_surface(cr, bg, 0, 0);
+            cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(bg), cairo_image_surface_get_height(bg));
             cairo_fill(cr);
 
             if (is_hovered) {
                 // Overlay translucent yellowish highlight on hover
                 cairo_set_source_rgba(cr, 1.0, 1.0, 0.7, 0.25);
-                cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(wood_texture), cairo_image_surface_get_height(wood_texture));
+                cairo_rectangle(cr, 0, 0, cairo_image_surface_get_width(bg), cairo_image_surface_get_height(bg));
                 cairo_fill(cr);
             }
             cairo_restore(cr);
-        } else {
-            // Fallback gradient background
+        } else if (!item.is_separator) {
+            // Fallback gradient if no background image
             cairo_pattern_t *pat = cairo_pattern_create_linear(item.x, item.y, item.x + item.w, item.y);
             if (is_hovered) {
                 cairo_pattern_add_color_stop_rgb(pat, 0.0, RGB(hovered_grad_left));
@@ -324,6 +374,7 @@ static void render_menu_branch(
         }
     }
 }
+
 static void render_menu_items(
     cairo_t* cr,
     wl_state* state
@@ -555,6 +606,40 @@ read_png_from_mem(void *closure, unsigned char *data, unsigned int length)
     mem->pos += length;
     return CAIRO_STATUS_SUCCESS;
 }
+#include <iostream>
+void prepare_backgrounds() {
+    if (gsimpleSize) {
+      mem_png mem_simple = { gsimpleData, gsimpleSize, 0 };
+      lone_texture = cairo_image_surface_create_from_png_stream(read_png_from_mem, &mem_simple);
+      if (cairo_surface_status(lone_texture) != CAIRO_STATUS_SUCCESS) {
+        fprintf(stderr, "Failed to load embedded img_simple texture\n");
+      }
+    }
+    if (gframe_topSize) {
+      mem_png mem_top = { gframe_topData, gframe_topSize, 0 };
+      top_texture = cairo_image_surface_create_from_png_stream(read_png_from_mem, &mem_top);
+      if (cairo_surface_status(top_texture) != CAIRO_STATUS_SUCCESS) {
+          fprintf(stderr, "Failed to load embedded frame-top.png\n");
+          top_texture = nullptr;
+      }
+    }
+    if (gframe_midSize) {
+      mem_png mem_mid = { gframe_midData, gframe_midSize, 0 };
+      mid_texture = cairo_image_surface_create_from_png_stream(read_png_from_mem, &mem_mid);
+      if (cairo_surface_status(mid_texture) != CAIRO_STATUS_SUCCESS) {
+          fprintf(stderr, "Failed to load embedded frame-mid.png\n");
+          mid_texture = nullptr;
+      }
+    }
+    if (gframe_botSize) {
+      mem_png mem_bot = { gframe_botData, gframe_botSize, 0 };
+      bot_texture = cairo_image_surface_create_from_png_stream(read_png_from_mem, &mem_bot);
+      if (cairo_surface_status(bot_texture) != CAIRO_STATUS_SUCCESS) {
+          fprintf(stderr, "Failed to load embedded frame-bot.png\n");
+          bot_texture = nullptr;
+      }
+    }
+}
 
 static void destroy_menu_icons(MenuList& menu_list) {
     for (auto& item : menu_list) {
@@ -654,16 +739,7 @@ int main(int argc, char** argv) {
     wl_display_roundtrip(state.display);
 
     desc = pango_font_description_from_string(font);
-    wood_texture = cairo_image_surface_create_from_png("wood1.png");
-    if (cairo_surface_status(wood_texture) != CAIRO_STATUS_SUCCESS) {
-      fprintf(stderr, "Failed to load wood texture\n");
-      wood_texture = nullptr;
-    }
-    mem_png mem = { gwoodData, gwoodSize, 0 };
-    wood_texture = cairo_image_surface_create_from_png_stream(read_png_from_mem, &mem);
-    if (cairo_surface_status(wood_texture) != CAIRO_STATUS_SUCCESS) {
-      fprintf(stderr, "Failed to load embedded wood texture\n");
-    }
+    prepare_backgrounds();
 
     state.buffer = create_buffer(&state);
     if (!state.buffer) {
@@ -698,5 +774,9 @@ int main(int argc, char** argv) {
     }
     if (state.registry) wl_registry_destroy(state.registry);
     if (state.display) wl_display_disconnect(state.display);
+    if (top_texture) cairo_surface_destroy(top_texture);
+    if (mid_texture) cairo_surface_destroy(mid_texture);
+    if (bot_texture) cairo_surface_destroy(bot_texture);
+    if (lone_texture) cairo_surface_destroy(lone_texture);
     return 0;
 }

@@ -3,8 +3,8 @@
                         ((hex >> 8) & 0xFF) / 255.0f, \
                         (hex & 0xFF) / 255.0f }
 
-static const int button_height = 30;
-static const int button_spacing = 3;
+static const int button_height = 34;
+static const int button_spacing = 0;
 static const int text_padding = 20;
 static const int min_width = 100;
 static const int separator_size = 1;
@@ -25,3 +25,18 @@ static const char* const font  = "Sans 12";
 static const int icon_size       = button_height-4;
 static const int icon_text_gap   = 6;
 static const int icon_left_pad   = 6;
+
+
+//#define single_background 1
+#define multi_background 1
+
+#ifdef multi_background
+#define img_top "frame-top.png"
+#define img_mid "frame-mid.png"
+#define img_bot "frame-bot.png"
+#define img_simple "wood3.png"
+
+#elif single_background
+#define img_simple "wood3.png"
+
+#endif
