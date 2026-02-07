@@ -23,10 +23,10 @@ const unsigned char gframe_botData[] = {};
 const unsigned int gframe_botSize = 0;
 #endif
 
-class wl_state;
-
 
 PangoFontDescription *desc;
+wl_state state = {};
+
 static cairo_surface_t *top_texture = nullptr;
 static cairo_surface_t *mid_texture = nullptr;
 static cairo_surface_t *bot_texture = nullptr;
@@ -199,12 +199,11 @@ bool wl_state::handle_menu_click(MenuList& menu_list) {
 static void render_menu_branch(
     cairo_t* cr,
     MenuList& menu_list,
-    wl_state* state,
     size_t level
 ) {
     if (menu_list.empty()) return;
-    menu_list.last_rendered = state->current_frame;
-    auto& hovered_path = state->hovered_path;
+    menu_list.last_rendered = state.current_frame;
+    auto& hovered_path = state.hovered_path;
 
     // Compute bounding rect for this menu
     int min_x = menu_list[0].x, min_y = menu_list[0].y, max_x = menu_list[0].max_x(), max_y = menu_list[0].max_y();
@@ -231,7 +230,7 @@ static void render_menu_branch(
     // Draw all menu items
     for (size_t i = 0; i < menu_list.size(); ++i) {
         auto& item = menu_list[i];
-        item.last_rendered = state->current_frame;
+        item.last_rendered = state.current_frame;
 
         if (item.is_separator) {
             // Draw horizontal line in the center of the separator box
@@ -365,25 +364,24 @@ static void render_menu_branch(
     if (hovered_path.size() > level) {
         int idx = hovered_path[level];
         if (idx >= 0 && idx < (int)menu_list.size() && !menu_list[idx].submenu.empty()) {
-            render_menu_branch(cr, menu_list[idx].submenu, state, level + 1);
+            render_menu_branch(cr, menu_list[idx].submenu, level + 1);
         }
-    } else if (auto sm_path = state->find_submenu_path(); sm_path.size() > level) {
+    } else if (auto sm_path = state.find_submenu_path(); sm_path.size() > level) {
         int idx = sm_path[level];
         if (idx >= 0 && idx < (int)menu_list.size() && !menu_list[idx].submenu.empty()) {
-            render_menu_branch(cr, menu_list[idx].submenu, state, level + 1);
+            render_menu_branch(cr, menu_list[idx].submenu, level + 1);
         }
     }
 }
 
 static void render_menu_items(
-    cairo_t* cr,
-    wl_state* state
+    cairo_t* cr
 ) {
-    state->current_frame++;
-    render_menu_branch(cr, state->menu, state, 0);
+    state.current_frame++;
+    render_menu_branch(cr, state.menu, 0);
 }
 
-static struct wl_buffer *create_transparent_buffer(wl_state *state, int width, int height) {
+static struct wl_buffer *create_transparent_buffer(int width, int height) {
     int stride = width * 4;
     int size = stride * height;
 
@@ -403,7 +401,7 @@ static struct wl_buffer *create_transparent_buffer(wl_state *state, int width, i
 
     memset(data, 0, size);
 
-    struct wl_shm_pool *pool = wl_shm_create_pool(state->shm, fd, size);
+    struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, fd, size);
     struct wl_buffer *buffer = wl_shm_pool_create_buffer(
         pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
@@ -414,14 +412,14 @@ static struct wl_buffer *create_transparent_buffer(wl_state *state, int width, i
     return buffer;
 }
 
-struct wl_buffer *create_buffer(wl_state *state) {
-    int scale = state->chosen_scale;
+struct wl_buffer *create_buffer() {
+    int scale = state.chosen_scale;
 
     cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
     cairo_t *temp_cr = cairo_create(temp_surface);
 
     // Assign geometry to all menu items (including submenus)
-    RenderedMenuGeometry geom = measure_menu_items(state->menu, temp_cr);
+    RenderedMenuGeometry geom = measure_menu_items(state.menu, temp_cr);
 
     int logical_width = geom.width;
     int logical_height = geom.height;
@@ -431,14 +429,14 @@ struct wl_buffer *create_buffer(wl_state *state) {
     int total_height = logical_height;
 
     // Traverse the hovered_path to determine the furthest right/bottom coordinate
-    const MenuList *current = &state->menu;
+    const MenuList *current = &state.menu;
     int level = 0;
 
     // Start with main menu bounding box
     int max_x = logical_width, max_y = logical_height;
 
-    while (state->hovered_path.size() > (size_t)level) {
-        int idx = state->hovered_path[level];
+    while (state.hovered_path.size() > (size_t)level) {
+        int idx = state.hovered_path[level];
         if (idx < 0 || idx >= (int)current->size())
             break;
         const MenuItem &item = (*current)[idx];
@@ -470,10 +468,10 @@ struct wl_buffer *create_buffer(wl_state *state) {
     cairo_destroy(temp_cr);
     cairo_surface_destroy(temp_surface);
 
-    state->width = total_width * scale;
-    state->height = total_height * scale;
-    int stride = state->width * 4;
-    int size = stride * state->height;
+    state.width = total_width * scale;
+    state.height = total_height * scale;
+    int stride = state.width * 4;
+    int size = stride * state.height;
 
     int fd = memfd_create("wayland-shm", 0);
     if (fd < 0) {
@@ -490,19 +488,19 @@ struct wl_buffer *create_buffer(wl_state *state) {
     }
 
     cairo_surface_t *cairo_surface = cairo_image_surface_create_for_data(
-        static_cast<unsigned char *>(data), CAIRO_FORMAT_ARGB32, state->width, state->height, stride);
+        static_cast<unsigned char *>(data), CAIRO_FORMAT_ARGB32, state.width, state.height, stride);
     cairo_t *cr = cairo_create(cairo_surface);
 
     cairo_scale(cr, scale, scale);
 
-    render_menu_items(cr, state);
+    render_menu_items(cr);
 
     cairo_destroy(cr);
     cairo_surface_destroy(cairo_surface);
 
-    struct wl_shm_pool *pool = wl_shm_create_pool(state->shm, fd, size);
+    struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, fd, size);
     struct wl_buffer *buffer = wl_shm_pool_create_buffer(
-        pool, 0, state->width, state->height, stride, WL_SHM_FORMAT_ARGB8888);
+        pool, 0, state.width, state.height, stride, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
 
     munmap(data, size);
@@ -511,9 +509,9 @@ struct wl_buffer *create_buffer(wl_state *state) {
     return buffer;
 }
 
-static void parse_menu(wl_state* state) {
+static void parse_menu() {
     std::vector<MenuList*> stack;
-    stack.push_back(&state->menu);
+    stack.push_back(&state.menu);
     bool prev_was_empty = false;
     char line[1024];
     while (fgets(line, sizeof(line), stdin)) {
@@ -532,7 +530,6 @@ static void parse_menu(wl_state* state) {
         if (*start == '\0') {
             prev_was_empty = true;
             MenuItem sep;
-            sep.state = state;
             sep.is_separator = true;
             stack[0]->items.push_back(std::move(sep));
             continue;
@@ -543,7 +540,6 @@ static void parse_menu(wl_state* state) {
         }
 
         MenuItem item;
-        item.state = state;
 
         if (strncmp(start, "IMG:", 4) == 0) {
             start += 4;
@@ -654,14 +650,13 @@ static void destroy_menu_icons(MenuList& menu_list) {
 }
 
 int main(int argc, char** argv) {
-    wl_state state = {};
     state.running = true;
     state.width = min_width;
     state.height = 100;
     state.chosen_output = nullptr;
     state.chosen_scale = 1;
 
-    parse_menu(&state);
+    parse_menu();
 
     if (state.menu.empty()) {
         fprintf(stderr, "No menu items provided on stdin\n");
@@ -710,7 +705,7 @@ int main(int argc, char** argv) {
     wl_display_roundtrip(state.display);
 
     // Use a reasonable default size for now; you may want to track this from configure
-    state.bg_buffer = create_transparent_buffer(&state, 1920, 1080);
+    state.bg_buffer = create_transparent_buffer(1920, 1080);
     if (!state.bg_buffer) {
         fprintf(stderr, "Failed to create background buffer\n");
         return 1;
@@ -741,7 +736,7 @@ int main(int argc, char** argv) {
     desc = pango_font_description_from_string(font);
     prepare_backgrounds();
 
-    state.buffer = create_buffer(&state);
+    state.buffer = create_buffer();
     if (!state.buffer) {
         fprintf(stderr, "Failed to create buffer\n");
         return 1;

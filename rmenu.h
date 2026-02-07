@@ -93,6 +93,8 @@ class wl_state {
     bool handle_menu_click(MenuList& menu_list);
 };
 
+extern wl_state state;
+
 class MenuItem {
   public:
     std::string label;
@@ -100,7 +102,6 @@ class MenuItem {
     std::string file;
     cairo_surface_t* icon_surface = nullptr;
     MenuList submenu;
-    wl_state* state;
     int icon_width;
     int icon_height;
     int last_rendered = 0;
@@ -111,11 +112,11 @@ class MenuItem {
     bool in_x(int px) const { return px >= x && px <= max_x(); }
     bool in_y(int py) const { return py >= y && py <= max_y(); }
     bool in_box() const { return !is_separator &&
-      last_rendered == state->current_frame &&
-      in_x(state->pointer_x) && in_y(state->pointer_y); }
+      last_rendered == state.current_frame &&
+      in_x(state.pointer_x) && in_y(state.pointer_y); }
 };
 
-struct wl_buffer *create_buffer(wl_state *state);
+struct wl_buffer *create_buffer();
 void registry_global(void *data, struct wl_registry *registry,
                            uint32_t name, const char *interface, uint32_t version);
 void registry_global_remove(void *data, struct wl_registry *, uint32_t name);

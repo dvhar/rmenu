@@ -35,7 +35,7 @@ static void pointer_motion(void *data, struct wl_pointer *, uint32_t, wl_fixed_t
     if (state->hovered_path != new_hovered_path && new_hovered_path.size()) {
         state->hovered_path = std::move(new_hovered_path);
         if (state->buffer) wl_buffer_destroy(state->buffer);
-        state->buffer = create_buffer(state);
+        state->buffer = create_buffer();
         wl_surface_attach(state->surface, state->buffer, 0, 0);
         wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
         wl_surface_commit(state->surface);
@@ -52,7 +52,7 @@ static void pointer_enter(void *data, struct wl_pointer *, uint32_t, struct wl_s
     if (state->hovered_path != new_hovered_path) {
         state->hovered_path = std::move(new_hovered_path);
         if (state->buffer) wl_buffer_destroy(state->buffer);
-        state->buffer = create_buffer(state);
+        state->buffer = create_buffer();
         wl_surface_attach(state->surface, state->buffer, 0, 0);
         wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
         wl_surface_commit(state->surface);
@@ -65,7 +65,7 @@ static void pointer_leave(void *data, struct wl_pointer *, uint32_t, struct wl_s
     if (!state->hovered_path.empty()) {
         state->hovered_path.clear();
         if (state->buffer) wl_buffer_destroy(state->buffer);
-        state->buffer = create_buffer(state);
+        state->buffer = create_buffer();
         wl_surface_attach(state->surface, state->buffer, 0, 0);
         wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
         wl_surface_commit(state->surface);

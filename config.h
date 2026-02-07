@@ -27,8 +27,12 @@ static const int icon_text_gap   = 6;
 static const int icon_left_pad   = 6;
 
 
-//#define single_background 1
+// Uncomment to use background images with distinct top and bottom parts.
 #define multi_background 1
+
+// Uncomment to use one background image for all buttons. Overwridden by
+// multi_background. Comment both to use plain color.
+#define single_background 1
 
 #ifdef multi_background
 #define img_top "frame-top.png"
