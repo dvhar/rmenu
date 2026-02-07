@@ -18,9 +18,10 @@ static const float menu_back[] = COLOR(0x0a0900); // #0a0900
 static const float text_color[] = COLOR(0xf0f0f0); // #f0f0f0
 static const float border_color[] = COLOR(0x505055); // #505055
 
+static const bool border_enabled = false;
 
 static const char* const font  = "Sans 12";
 
-static const int icon_size       = button_height;
-static const int icon_text_gap   = 8;
-static const int icon_left_pad   = text_padding;
+static const int icon_size       = button_height-4;
+static const int icon_text_gap   = 6;
+static const int icon_left_pad   = 6;

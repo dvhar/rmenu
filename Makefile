@@ -33,7 +33,7 @@ wlr-layer-shell-unstable-v1-client-protocol.o: wlr-layer-shell-unstable-v1-clien
 	$(CC) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Compile main
-main.o: main.cc wlr-layer-shell-unstable-v1-client-protocol.h xdg-shell-client-protocol.h config.h
+main.o: main.cc wlr-layer-shell-unstable-v1-client-protocol.h xdg-shell-client-protocol.h config.h rmenu.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c main.cc -o $@
 	#
 # Compile other

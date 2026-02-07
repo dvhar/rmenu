@@ -1,6 +1,7 @@
 #include "rmenu.h"
 
 INCBIN(wood, "wood3.png");
+#define RGB(arr) arr[0], arr[1], arr[2]
 
 class wl_state;
 
@@ -114,7 +115,7 @@ static RenderedMenuGeometry measure_menu_items(
     // If this menu has any icons → increase left padding for ALL items
     menu_list.text_left_padding = text_padding;
     if (menu_list.has_icons) {
-        menu_list.text_left_padding = icon_size + icon_text_gap;
+        menu_list.text_left_padding = icon_size + icon_text_gap + icon_left_pad;
     }
 
     // Second pass: assign geometry
@@ -194,7 +195,7 @@ static void render_menu_branch(
     int menu_height = max_y - min_y;
 
     // Draw menu background
-    cairo_set_source_rgb(cr, menu_back[0], menu_back[1], menu_back[1]);
+    cairo_set_source_rgb(cr, RGB(menu_back));
     cairo_rectangle(cr, min_x, min_y, menu_width, menu_height);
     cairo_fill(cr);
 
@@ -206,7 +207,7 @@ static void render_menu_branch(
         if (item.is_separator) {
             // Draw horizontal line in the center of the separator box
             double sep_y = item.y + separator_size / 2.0;
-            cairo_set_source_rgb(cr, sep_color[0], sep_color[1], sep_color[2]);
+            cairo_set_source_rgb(cr, RGB(sep_color));
             cairo_set_line_width(cr, separator_size);
             cairo_move_to(cr, item.x + 5, sep_y);
             cairo_line_to(cr, item.x + item.w - 5, sep_y);
@@ -239,11 +240,11 @@ static void render_menu_branch(
             // Fallback gradient background
             cairo_pattern_t *pat = cairo_pattern_create_linear(item.x, item.y, item.x + item.w, item.y);
             if (is_hovered) {
-                cairo_pattern_add_color_stop_rgb(pat, 0.0, hovered_grad_left[0], hovered_grad_left[1], hovered_grad_left[2]);
-                cairo_pattern_add_color_stop_rgb(pat, 1.0, hovered_grad_right[0], hovered_grad_right[1], hovered_grad_right[2]);
+                cairo_pattern_add_color_stop_rgb(pat, 0.0, RGB(hovered_grad_left));
+                cairo_pattern_add_color_stop_rgb(pat, 1.0, RGB(hovered_grad_right));
             } else {
-                cairo_pattern_add_color_stop_rgb(pat, 0.0, button_grad_left[0], button_grad_left[1], button_grad_left[2]);
-                cairo_pattern_add_color_stop_rgb(pat, 1.0, button_grad_right[0], button_grad_right[1], button_grad_right[2]);
+                cairo_pattern_add_color_stop_rgb(pat, 0.0, RGB(button_grad_left));
+                cairo_pattern_add_color_stop_rgb(pat, 1.0, RGB(button_grad_right));
             }
             cairo_rectangle(cr, item.x, item.y, item.w, item.h);
             cairo_set_source(cr, pat);
@@ -251,11 +252,13 @@ static void render_menu_branch(
             cairo_pattern_destroy(pat);
         }
 
-        // Draw button border
-        cairo_set_source_rgb(cr, border_color[0], border_color[1], border_color[2]);
-        cairo_set_line_width(cr, 1.0);
-        cairo_rectangle(cr, item.x, item.y, item.w, item.h);
-        cairo_stroke(cr);
+        if (border_enabled) {
+          // Draw button border
+          cairo_set_source_rgb(cr, RGB(border_color));
+          cairo_set_line_width(cr, 1.0);
+          cairo_rectangle(cr, item.x, item.y, item.w, item.h);
+          cairo_stroke(cr);
+        }
 
         // === Draw icon (if present) ===
         if (item.icon_surface && item.icon_surface != nullptr) {
@@ -263,7 +266,7 @@ static void render_menu_branch(
 
             cairo_save(cr);
             // Start icon at the very left edge of the item (no text_padding!)
-            cairo_translate(cr, item.x, icon_y);
+            cairo_translate(cr, item.x + icon_left_pad, icon_y);
 
             // Scale to ICON_SIZE
             double sx = (double)icon_size / item.icon_width;
@@ -276,7 +279,7 @@ static void render_menu_branch(
         }
 
         // === Draw text ===
-        cairo_set_source_rgb(cr, text_color[0], text_color[1], text_color[2]);
+        cairo_set_source_rgb(cr, RGB(text_color));
         PangoLayout *layout = pango_cairo_create_layout(cr);
         pango_layout_set_font_description(layout, desc);
         pango_layout_set_text(layout, item.label.c_str(), -1);
