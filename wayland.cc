@@ -1,7 +1,17 @@
 #include "rmenu.h"
 
 static void output_geometry(void*, struct wl_output*, int, int, int, int, int, const char*, const char*, int) {}
-static void output_mode(void*, struct wl_output*, uint32_t, int, int, int) {}
+static void output_mode(void* data, struct wl_output* output, uint32_t flags, int width, int height, int refresh) {
+    wl_state* state = (wl_state*)data;
+    for (auto& pair : state->outputs_by_name) {
+        if (pair.second.output == output) {
+            if (flags & WL_OUTPUT_MODE_CURRENT) {
+                pair.second.width = width;
+                pair.second.height = height;
+            }
+        }
+    }
+}
 static void output_done(void*, struct wl_output*) {}
 static void output_name(void*, struct wl_output*, const char*) {}
 static void output_description(void*, struct wl_output*, const char*) {}

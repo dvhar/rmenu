@@ -705,7 +705,19 @@ int main(int argc, char** argv) {
     wl_display_roundtrip(state.display);
 
     // Use a reasonable default size for now; you may want to track this from configure
-    state.bg_buffer = create_transparent_buffer(1920, 1080);
+    int bg_width = 1920;
+    int bg_height = 1080;
+    if (state.chosen_output) {
+        for (const auto& pair : state.outputs_by_name) {
+            if (pair.second.output == state.chosen_output) {
+                bg_width = pair.second.width;
+                bg_height = pair.second.height;
+                break;
+            }
+        }
+    }
+
+    state.bg_buffer = create_transparent_buffer(bg_width, bg_height);
     if (!state.bg_buffer) {
         fprintf(stderr, "Failed to create background buffer\n");
         return 1;

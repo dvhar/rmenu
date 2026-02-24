@@ -48,6 +48,8 @@ struct wl_output_data {
     struct wl_output *output;
     int32_t scale;
     uint32_t name;
+    int32_t width;
+    int32_t height;
 };
 
 class wl_state {
