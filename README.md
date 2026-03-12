@@ -33,4 +33,5 @@ Parent Item
 - **Separators:** An empty line creates a visual separator. Separators are not supported within submenus.
 - **Comments:** Lines starting with `#` are ignored.
 
+<img src="https://github.com/user-attachments/assets/396a0b1f-72b3-4216-a78d-346d6ae66c36" height="500px"/>
 <img src="https://github.com/user-attachments/assets/fff6b3b6-2f83-4d83-9de6-41b9a4eb05a1" height="500px"/>
