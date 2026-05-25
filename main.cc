@@ -674,13 +674,21 @@ int main(int argc, char** argv) {
     wl_display_roundtrip(state.display);
     wl_display_roundtrip(state.display);
 
+    // Determine scale from any available output (used for buffer scaling).
+    // The actual display output is chosen by passing nullptr to
+    // zwlr_layer_shell_v1_get_layer_surface, which lets the compositor
+    // pick the most recently interacted-with output (i.e. the focused monitor).
     if (!state.outputs_by_name.empty()) {
         auto it = state.outputs_by_name.begin();
-        state.chosen_output = it->second.output;
         state.chosen_scale = (it->second.scale > 0) ? it->second.scale : 1;
     } else {
         state.chosen_scale = 1;
     }
+
+    // Pick the output on which to display the menu.
+    // Let the compositor decide by passing nullptr — it picks the output
+    // the user most recently interacted with (the focused monitor).
+    state.chosen_output = nullptr;
 
     if (!state.compositor || !state.shm || !state.layer_shell) {
         fprintf(stderr, "Failed to bind required Wayland interfaces\n");
@@ -704,18 +712,10 @@ int main(int argc, char** argv) {
     wl_surface_commit(state.bg_surface);
     wl_display_roundtrip(state.display);
 
-    // Use a reasonable default size for now; you may want to track this from configure
+    // Use a reasonable default size for the background; we'll resize when
+    // the configure event arrives with actual dimensions.
     int bg_width = 1920;
     int bg_height = 1080;
-    if (state.chosen_output) {
-        for (const auto& pair : state.outputs_by_name) {
-            if (pair.second.output == state.chosen_output) {
-                bg_width = pair.second.width;
-                bg_height = pair.second.height;
-                break;
-            }
-        }
-    }
 
     state.bg_buffer = create_transparent_buffer(bg_width, bg_height);
     if (!state.bg_buffer) {
